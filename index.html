@@ -2,7 +2,7 @@
 <html lang="en-us">
   <head>
     <meta charset="UTF-8">
-    <title>RXDeep by runshenzhu</title>
+    <title>Squeeze Deep Learning onto Your Phone by runshenzhu</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" type="text/css" href="stylesheets/normalize.css" media="screen">
     <link href='https://fonts.googleapis.com/css?family=Open+Sans:400,700' rel='stylesheet' type='text/css'>
@@ -11,18 +11,86 @@
   </head>
   <body>
     <section class="page-header">
-      <h1 class="project-name">RXDeep</h1>
-      <h2 class="project-tagline">empty</h2>
+      <h1 class="project-name">Squeeze Deep Learning onto Your Phone</h1>
+      <h2 class="project-tagline"></h2>
       <a href="https://github.com/runshenzhu/618-final" class="btn">View on GitHub</a>
       <a href="https://github.com/runshenzhu/618-final/zipball/master" class="btn">Download .zip</a>
       <a href="https://github.com/runshenzhu/618-final/tarball/master" class="btn">Download .tar.gz</a>
     </section>
 
     <section class="main-content">
-      <p>empty again</p>
+      <p>We are going to implement memory and energy efficient deep neural networks on mobile devices. The basic idea is to accelerate prediction process on already-trained model on a mobile GPU such as Tegra K1/X1. </p>
+
+<h3>
+<a id="background" class="anchor" href="#background" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Background</h3>
+
+<p>Deep learning is a promising and popular AI technology that may greatly change the future world. If we can run deep learning models efficiently on mobile devices, it makes normal people the able to use state-of-the-art AI technologies in daily lives. However, deep learning is both memory and computational complicated, how to run it efficiently on mobile devices is a challenging problem.</p>
+
+<p>Recent research about bitwise neural network [1][2] can result in 58x faster convolutional operations and 32x memory savings, and deep compression [3] reduces the storage and energy required to run inference on large networks. All these techniques make deep learning running on resource constrained mobile devices possible.</p>
+
+<h3>
+<a id="challenges" class="anchor" href="#challenges" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Challenges</h3>
+
+<ul>
+<li>Mobile device has constrained memory and storage, but nerual networks with decent accuracy can easily have tens of thousands parameters</li>
+<li>Enegy consumption is critical for mobile devices, nerual network prediction is computationally complicated</li>
+</ul>
+
+<h3>
+<a id="resources" class="anchor" href="#resources" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Resources:</h3>
+
+<ul>
+<li>Tegra K1 Dev Kit</li>
+</ul>
+
+<h3>
+<a id="goals" class="anchor" href="#goals" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Goals</h3>
+
+<ul>
+<li>75% goal
+
+<ul>
+<li>Import trained models from popular deep learning frameworks such as Caffe to mobile devices. We plan to fisrt import AlexNet.</li>
+<li>Run neural network prediction on Tegra K1 (GPU and CPU).</li>
+</ul>
+</li>
+<li>100% goal
+
+<ul>
+<li>Achieve real time neural network prediction in on Tegra K1.</li>
+<li>Evalute memory efficiency and energy efficiency, determine expensive part of the prediction process.</li>
+<li>Reduce runtime memory footprint and enery footprint based on the evaluation results. Implementing deep compression and bitwise NN if needed.</li>
+</ul>
+</li>
+</ul>
+
+<h3>
+<a id="platform-choice" class="anchor" href="#platform-choice" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Platform choice</h3>
+
+<p>Tegra K1 chip: this chip has a 192-core GPU and a quad-core ARM CPU, we can use this heterogeneity to evaluate deep learning runtime performance on different platforms. This chip is also targeting at mobile devices, for example the chip is small in size, and is very energy efficient. Besides, the GPU supports cuDNN, a cuda GPU deep learning framework that is widely used.</p>
+
+<h3>
+<a id="schedule" class="anchor" href="#schedule" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Schedule</h3>
+
+<ul>
+<li>4/4 - 4/10 Set up the development environment. Read and undstand related papers.</li>
+<li>4/11- 4/16 Get a correct, unoptimized implementation. (75% goal)</li>
+<li>4/17 - 4/24 Implement deep compression to reduce the mode size.</li>
+<li>4/25 - 5/1 Implement XNOR-NET to accelarate prediction. (100% goal)</li>
+<li>5/2 - 5/8 Benchmark and Write up.</li>
+</ul>
+
+<h3>
+<a id="references" class="anchor" href="#references" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>References</h3>
+
+<p>[1] XNOR-Net: ImageNet Classification Using Binary Convolutional Neural Networks</p>
+
+<p>[2] Bitwise Neural Networks</p>
+
+<p>[3] Deep Compression: Compressing Deep Neural Networks with Pruning, Trained Quantization and Huffman Coding</p>
 
       <footer class="site-footer">
-        <span class="site-footer-owner"><a href="https://github.com/runshenzhu/618-final">RXDeep</a> is maintained by <a href="https://github.com/runshenzhu">runshenzhu</a>.</span>
+        <span class="site-footer-owner"><a href="https://github.com/runshenzhu/618-final">Squeeze Deep Learning onto Your Phone</a> is maintained by <a href="https://github.com/runshenzhu">runshenzhu</a>.</span>
 
         <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a> using the <a href="https://github.com/jasonlong/cayman-theme">Cayman theme</a> by <a href="https://twitter.com/jasonlong">Jason Long</a>.</span>
       </footer>
