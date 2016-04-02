@@ -1,0 +1,4 @@
+---
+title: Proposal
+---
+EMPTY
