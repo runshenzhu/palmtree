@@ -19,7 +19,10 @@
     </section>
 
     <section class="main-content">
-      <p>We are going to implement memory and energy efficient deep neural networks on mobile devices. The basic idea is to accelerate prediction process on already-trained model on a mobile GPU such as Tegra K1/X1. </p>
+      <h1>
+<a id="proposal" class="anchor" href="#proposal" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>PROPOSAL</h1>
+
+<p>We are going to implement memory and energy efficient deep neural networks on mobile devices. The basic idea is to accelerate prediction process on already-trained model on a mobile GPU such as Tegra K1/X1. </p>
 
 <h3>
 <a id="background" class="anchor" href="#background" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Background</h3>
@@ -34,6 +37,7 @@
 <ul>
 <li>Mobile device has constrained memory and storage, but nerual networks with decent accuracy can easily have tens of thousands parameters</li>
 <li>Enegy consumption is critical for mobile devices, nerual network prediction is computationally complicated</li>
+<li>while good prediction accuracy requires significant amount of computing resources, it's hard for mobile device to meet this requirement.</li>
 </ul>
 
 <h3>
@@ -60,6 +64,12 @@
 <li>Achieve real time neural network prediction in on Tegra K1.</li>
 <li>Evalute memory efficiency and energy efficiency, determine expensive part of the prediction process.</li>
 <li>Reduce runtime memory footprint and enery footprint based on the evaluation results. Implementing deep compression and bitwise NN if needed.</li>
+</ul>
+</li>
+<li>125% goal
+
+<ul>
+<li>Beat state of the art NN prediction runtime on mobile devices.</li>
 </ul>
 </li>
 </ul>
