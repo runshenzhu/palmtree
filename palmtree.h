@@ -26,19 +26,6 @@ namespace palmtree {
     static const int LEAF_MAX_SLOT = 1024;
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
-  public:
-  /**
-   * Tree operation wrappers
-   */
-  class TreeOp {
-  public:
-    TreeOp(TreeOpType op_type, const KeyType &key, const ValueType &value):
-      op_type_(op_type), key_(key), value_(value) {};
-  private:
-    TreeOpType op_type_;
-    KeyType key_;
-    ValueType value_;
-  };
 
   private:
     /**
@@ -86,6 +73,23 @@ namespace palmtree {
         return Node::slot_used < LEAF_MAX_SLOT/4;
       }
     };
+    /**
+     * Tree operation wrappers
+     */
+    class TreeOp {
+      public:
+        TreeOp(TreeOpType op_type, const KeyType &key, const ValueType &value):
+          op_type_(op_type), key_(key), value_(value) {};
+        TreeOp(TreeOpType op_type, const KeyType &key):
+          op_type_(op_type), key_(key) {};
+
+      private:
+        TreeOpType op_type_;
+        KeyType key_;
+        ValueType value_;
+
+        LeafNode *target_node_;
+    };
 
   /********************
    * PalmTree private
@@ -112,15 +116,12 @@ namespace palmtree {
         return lo;
       }
 
-
       int lo = 0, hi = size;
       while (lo != hi) {
         int mid = (lo + hi) / 2; // Or a fancy way to avoid int overflow
         if (key_less(input[mid], target)) {
           /* This index, and everything below it, must not be the first element
-           * greater than what we're looking for because this element is no greater
-           * than the element.
-           */
+           * >= than what we're looking for */
           lo = mid + 1;
         }
         else {
@@ -134,8 +135,19 @@ namespace palmtree {
       return lo;
     }
 
+    /**
+     * @brief Return the leaf node that contains the @key
+     */
+    LeafNode *search(const KeyType &key UNUSED) {
+      return nullptr;
+    }
+
+    /**************************
+     * Concurrent executions **
+     * ************************/
+
     /**********************
-     * PalmTree public
+     * PalmTree public    *
      * ********************/
   public:
     PalmTree() {
