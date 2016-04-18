@@ -15,6 +15,11 @@ namespace palmtree {
     TREE_OP_REMOVE
   };
 
+  enum NodeType {
+    INNERNODE = 0,
+    LEAFNODE
+  };
+
   template <typename KeyType,
            typename ValueType,
            typename PairType = std::pair<KeyType, ValueType>,
@@ -58,6 +63,9 @@ namespace palmtree {
       // Pointers for children
       Node *children[INNER_MAX_SLOT+1];
 
+      NodeType Type() const {
+        return INNERNODE;
+      }
       inline bool IsFull() const {
         return Node::slot_used == INNER_MAX_SLOT;
       }
@@ -77,6 +85,10 @@ namespace palmtree {
 
       KeyType keys[LEAF_MAX_SLOT];
       ValueType values[LEAF_MAX_SLOT];
+
+      NodeType Type() const {
+        return LEAFNODE;
+      }
 
       inline bool IsFull() const {
         return Node::slot_used == LEAF_MAX_SLOT;
@@ -141,6 +153,8 @@ namespace palmtree {
     PalmTree() {
       tree_root = new Node();
     };
+
+
 
     ValueType *Find(const KeyType &key UNUSED) {
       return nullptr;
