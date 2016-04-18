@@ -16,17 +16,15 @@ namespace {
     // Max number of slots per leaf node
     static const int LEAF_MAX_SLOT = 1024;
 
-
-
   private:
-    class Node {
+    struct Node {
       // Number of actually used slots
       int slot_used;
 
       Node(){};
     };
 
-    class InnerNode : public Node {
+    struct InnerNode : public Node {
       InnerNode(){};
       // Keys for children
       KeyType keys[INNER_MAX_SLOT];
@@ -43,7 +41,7 @@ namespace {
 
     };
 
-    class LeafNode : public Node {
+    struct LeafNode : public Node {
       LeafNode(): prev(nullptr), next(nullptr) {};
 
       LeafNode *prev;
@@ -68,9 +66,42 @@ namespace {
   private:
     Node *tree_root;
 
-  /**********************
-   * PalmTree public
-   * ********************/
+    template <typename node_type>
+    // Return the index of the first slot whose key >= @key
+    inline int find_lower(const Node* n, const KeyType &key) const
+    {
+      const int BIN_SEARCH_THRESHOLD = 128;
+      if (sizeof(n->keys) > BIN_SEARCH_THRESHOLD)
+      {
+        if (n->slot_used == 0) return 0;
+
+        int lo = 0, hi = n->slotuse;
+
+        while (lo < hi)
+        {
+          int mid = (lo + hi) >> 1;
+
+          if (Compare(key, n->keys[mid])) {
+            hi = mid;     // key <= mid
+          }
+          else {
+            lo = mid + 1; // key > mid
+          }
+        }
+
+        return lo;
+      }
+      else // for nodes <= binsearch_threshold do linear search.
+      {
+        int lo = 0;
+        while (lo < n->slotuse && key_less(n->slotkey[lo], key)) ++lo;
+        return lo;
+      }
+    }
+
+    /**********************
+     * PalmTree public
+     * ********************/
   public:
     PalmTree() {
       tree_root = new Node();
@@ -88,5 +119,4 @@ namespace {
 
     }
   };
-
 }
