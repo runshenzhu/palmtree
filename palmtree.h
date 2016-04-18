@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <vector>
+#include <assert.h>
 
 #define UNUSED __attribute__((unused))
 
@@ -14,6 +15,11 @@ namespace palmtree {
     TREE_OP_FIND = 0,
     TREE_OP_INSERT,
     TREE_OP_REMOVE
+  };
+
+  enum NodeType {
+    INNERNODE = 0,
+    LEAFNODE
   };
 
   template <typename KeyType,
@@ -37,6 +43,7 @@ namespace palmtree {
       int slot_used;
 
       Node(){};
+      virtual NodeType Type() const = 0;
     };
 
     struct InnerNode : public Node {
@@ -46,6 +53,9 @@ namespace palmtree {
       // Pointers for children
       Node *children[INNER_MAX_SLOT];
 
+      virtual NodeType Type() const {
+        return INNERNODE;
+      }
       inline bool IsFull() const {
         return Node::slot_used == INNER_MAX_SLOT;
       }
@@ -65,6 +75,10 @@ namespace palmtree {
 
       KeyType keys[LEAF_MAX_SLOT];
       ValueType values[LEAF_MAX_SLOT];
+
+      virtual NodeType Type() const {
+        return LEAFNODE;
+      }
 
       inline bool IsFull() const {
         return Node::slot_used == LEAF_MAX_SLOT;
@@ -157,7 +171,19 @@ namespace palmtree {
      * @brief Return the leaf node that contains the @key
      */
     LeafNode *search(const KeyType &key UNUSED) {
-      return nullptr;
+      assert(tree_root);
+      auto ptr = (InnerNode *)tree_root;
+      for (;;) {
+        auto idx = this->BSearch(ptr->keys, ptr->slot_used, key);
+        Node *child = ptr->children[idx];
+        if (child->Type() == LEAFNODE) {
+          return (LeafNode *)child;
+        }else {
+          ptr = (InnerNode *)child;
+        }
+      }
+      // we shouldn't reach here
+      assert(0);
     }
 
     /**
@@ -179,7 +205,7 @@ namespace palmtree {
      * ********************/
   public:
     PalmTree() {
-      tree_root = new Node();
+      tree_root = new InnerNode();
     };
 
     ValueType *Find(const KeyType &key UNUSED) {
