@@ -41,6 +41,7 @@ namespace palmtree {
       int slot_used;
 
       Node(){};
+      virtual NodeType Type() const = 0;
     };
 
     struct InnerNode : public Node {
@@ -50,7 +51,7 @@ namespace palmtree {
       // Pointers for children
       Node *children[INNER_MAX_SLOT+1];
 
-      NodeType Type() const {
+      virtual NodeType Type() const {
         return INNERNODE;
       }
       inline bool IsFull() const {
@@ -73,7 +74,7 @@ namespace palmtree {
       KeyType keys[LEAF_MAX_SLOT];
       ValueType values[LEAF_MAX_SLOT];
 
-      NodeType Type() const {
+      virtual NodeType Type() const {
         return LEAFNODE;
       }
 
@@ -151,6 +152,7 @@ namespace palmtree {
      * @brief Return the leaf node that contains the @key
      */
     LeafNode *search(const KeyType &key UNUSED) {
+
       return nullptr;
     }
 
@@ -163,7 +165,7 @@ namespace palmtree {
      * ********************/
   public:
     PalmTree() {
-      tree_root = new Node();
+      tree_root = new InnerNode();
     };
 
 
