@@ -1,7 +1,7 @@
 #pragma once
 
 #include <functional>
-
+#include <assert.h>
 #define UNUSED __attribute__((unused))
 
 namespace palmtree {
@@ -152,8 +152,19 @@ namespace palmtree {
      * @brief Return the leaf node that contains the @key
      */
     LeafNode *search(const KeyType &key UNUSED) {
-
-      return nullptr;
+      assert(tree_root);
+      auto ptr = (InnerNode *)tree_root;
+      for (;;) {
+        auto idx = this->BSearch(ptr->keys, ptr->slot_used, key);
+        Node *child = ptr->children[idx];
+        if (child->Type() == LEAFNODE) {
+          return (LeafNode *)child;
+        }else {
+          ptr = (InnerNode *)child;
+        }
+      }
+      // we shouldn't reach here
+      assert(0);
     }
 
     /**************************
