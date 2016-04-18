@@ -138,33 +138,24 @@ namespace palmtree {
     inline bool key_eq(const KeyType &k1, const KeyType &k2) {
       return !kcmp(k1, k2) && !kcmp(k2, k1);
     }
-    // Return the index of the first slot whose key >= @key
+    // Return the index of the smallest slot whose key <= @key
     // assume there is no duplicated element
-    int BSearch(const KeyType *input, int size, const KeyType &target) {
-      if (size <= BIN_SEARCH_THRESHOLD) {
-        // few elements, linear search
-        int lo = 0;
-        while (lo < size && key_less(input[lo], target)) ++lo;
-        return lo;
-      }
+    int SearchHelper(const KeyType *input, int size, const KeyType &target) {
+      int res = size;
+      // loop all element
+      for (int i = 0; i < size; i++) {
+        if(key_less(target, input[i])){
+          // target < input
+          // ignore
+          continue;
 
-      int lo = 0, hi = size;
-      while (lo != hi) {
-        int mid = (lo + hi) / 2; // Or a fancy way to avoid int overflow
-        if (key_less(input[mid], target)) {
-          /* This index, and everything below it, must not be the first element
-           * >= than what we're looking for */
-          lo = mid + 1;
         }
-        else {
-          /* This element is at least as large as the element, so anything after it can't
-           * be the first element that's at least as large.
-           */
-          hi = mid;
+        if (res == size || key_less(input[i], input[res])) {
+          res = i;
         }
+
       }
-      /* Now, low and high both point to the element in question. */
-      return lo;
+      return res;
     }
 
     /**
@@ -174,7 +165,7 @@ namespace palmtree {
       assert(tree_root);
       auto ptr = (InnerNode *)tree_root;
       for (;;) {
-        auto idx = this->BSearch(ptr->keys, ptr->slot_used, key);
+        auto idx = this->SearchHelper(ptr->keys, ptr->slot_used, key);
         Node *child = ptr->children[idx];
         if (child->Type() == LEAFNODE) {
           return (LeafNode *)child;
