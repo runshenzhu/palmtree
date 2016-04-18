@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <vector>
 
 #define UNUSED __attribute__((unused))
 
@@ -43,7 +44,7 @@ namespace palmtree {
       // Keys for children
       KeyType keys[INNER_MAX_SLOT];
       // Pointers for children
-      Node *children[INNER_MAX_SLOT+1];
+      Node *children[INNER_MAX_SLOT];
 
       inline bool IsFull() const {
         return Node::slot_used == INNER_MAX_SLOT;
@@ -76,19 +77,36 @@ namespace palmtree {
     /**
      * Tree operation wrappers
      */
-    class TreeOp {
-      public:
-        TreeOp(TreeOpType op_type, const KeyType &key, const ValueType &value):
-          op_type_(op_type), key_(key), value_(value) {};
-        TreeOp(TreeOpType op_type, const KeyType &key):
-          op_type_(op_type), key_(key) {};
+    struct TreeOp {
+      TreeOp(TreeOpType op_type, const KeyType &key, const ValueType &value):
+        op_type_(op_type), key_(key), value_(value) {};
+      TreeOp(TreeOpType op_type, const KeyType &key):
+        op_type_(op_type), key_(key) {};
 
-      private:
-        TreeOpType op_type_;
-        KeyType key_;
-        ValueType value_;
+      TreeOpType op_type_;
+      KeyType key_;
+      ValueType value_;
 
-        LeafNode *target_node_;
+      LeafNode *target_node_;
+    };
+
+    enum ModType {
+      MOD_TYPE_ADD,
+      MOD_TYPE_DEC,
+      MOD_TYPE_NONE
+    };
+
+    /**
+     * Wrapper for node modification
+     */
+    struct NodeMod {
+      NodeMod(ModType type): type_(type) {}
+      ModType type_;
+      // Leaf
+      std::vector<std::pair<KeyType, ValueType>> value_items;
+      // Inner
+      std::vector<std::pair<KeyType, Node *>> node_items;
+      std::vector<KeyType> orphaned_keys;
     };
 
   /********************
@@ -140,6 +158,16 @@ namespace palmtree {
      */
     LeafNode *search(const KeyType &key UNUSED) {
       return nullptr;
+    }
+
+    /**
+     * @brief Modify @node by applying node modifications in @modes. If @node
+     * is a leaf node, @mods will be a list of add kv and del kv. If @node is
+     * a inner node, @mods will be a list of add range and del range. If new
+     * node modifications are triggered, record them in @new_mods.
+     */
+    NodeMod modify_node(Node *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
+      return NodeMod(MOD_TYPE_NONE);
     }
 
     /**************************
