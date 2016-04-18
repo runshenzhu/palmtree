@@ -15,7 +15,7 @@ namespace {
     static const int INNER_MAX_SLOT = 256;
     // Max number of slots per leaf node
     static const int LEAF_MAX_SLOT = 1024;
-
+    static const int BIN_SEARCH_THRESHOLD = 32;
   private:
     struct Node {
       // Number of actually used slots
@@ -66,37 +66,36 @@ namespace {
   private:
     Node *tree_root;
 
-    template <typename node_type>
     // Return the index of the first slot whose key >= @key
-    inline int find_lower(const Node* n, const KeyType &key) const
-    {
-      const int BIN_SEARCH_THRESHOLD = 128;
-      if (sizeof(n->keys) > BIN_SEARCH_THRESHOLD)
-      {
-        if (n->slot_used == 0) return 0;
-
-        int lo = 0, hi = n->slotuse;
-
-        while (lo < hi)
-        {
-          int mid = (lo + hi) >> 1;
-
-          if (Compare(key, n->keys[mid])) {
-            hi = mid;     // key <= mid
-          }
-          else {
-            lo = mid + 1; // key > mid
-          }
-        }
-
-        return lo;
-      }
-      else // for nodes <= binsearch_threshold do linear search.
-      {
+    // assume there is no duplicated element
+    int BSearch(const KeyType *input, int size, const KeyType &target) {
+      if (size <= BIN_SEARCH_THRESHOLD) {
+        // few elements, linear search
         int lo = 0;
-        while (lo < n->slotuse && key_less(n->slotkey[lo], key)) ++lo;
+        while (lo < size && Compare(input[lo], target)) ++lo;
         return lo;
       }
+
+
+      int lo = 0, hi = size;
+      while (lo != hi) {
+        int mid = (lo + hi) / 2; // Or a fancy way to avoid int overflow
+        if (Compare(input[mid], target)) {
+          /* This index, and everything below it, must not be the first element
+           * greater than what we're looking for because this element is no greater
+           * than the element.
+           */
+          lo = mid + 1;
+        }
+        else {
+          /* This element is at least as large as the element, so anything after it can't
+           * be the first element that's at least as large.
+           */
+          hi = mid;
+        }
+      }
+      /* Now, low and high both point to the element in question. */
+      return lo;
     }
 
     /**********************
