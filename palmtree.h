@@ -108,7 +108,7 @@ namespace palmtree {
       if (size <= BIN_SEARCH_THRESHOLD) {
         // few elements, linear search
         int lo = 0;
-        while (lo < size && Compare(input[lo], target)) ++lo;
+        while (lo < size && key_less(input[lo], target)) ++lo;
         return lo;
       }
 
@@ -116,7 +116,7 @@ namespace palmtree {
       int lo = 0, hi = size;
       while (lo != hi) {
         int mid = (lo + hi) / 2; // Or a fancy way to avoid int overflow
-        if (Compare(input[mid], target)) {
+        if (key_less(input[mid], target)) {
           /* This index, and everything below it, must not be the first element
            * greater than what we're looking for because this element is no greater
            * than the element.
@@ -153,5 +153,7 @@ namespace palmtree {
     void Remove(const KeyType &key UNUSED) {
 
     }
-  };
-}
+  }; // End of PalmTree
+  template class PalmTree<int, int>;
+} // End of namespace palmtree
+
