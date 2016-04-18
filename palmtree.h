@@ -4,19 +4,44 @@
 
 #define UNUSED __attribute__((unused))
 
-namespace {
+namespace palmtree {
+
+  /**
+   * Tree operation types
+   */
+  enum TreeOpType {
+    TREE_OP_FIND = 0,
+    TREE_OP_INSERT,
+    TREE_OP_REMOVE
+  };
 
   template <typename KeyType,
            typename ValueType,
            typename PairType = std::pair<KeyType, ValueType>,
-           typename Compare = std::less<KeyType> >
+           typename KeyComparator = std::less<KeyType> >
   class PalmTree {
     // Max number of slots per inner node
     static const int INNER_MAX_SLOT = 256;
     // Max number of slots per leaf node
     static const int LEAF_MAX_SLOT = 1024;
+  public:
+  /**
+   * Tree operation wrappers
+   */
+  class TreeOp {
+  public:
+    TreeOp(TreeOpType op_type, const KeyType &key, const ValueType &value):
+      op_type_(op_type), key_(key), value_(value) {};
+  private:
+    TreeOpType op_type_;
+    KeyType key_;
+    ValueType value_;
+  };
 
   private:
+    /**
+     * Tree node base class
+     */
     struct Node {
       // Number of actually used slots
       int slot_used;
@@ -66,37 +91,14 @@ namespace {
   private:
     Node *tree_root;
 
-    template <typename node_type>
-    // Return the index of the first slot whose key >= @key
-    inline int find_lower(const Node* n, const KeyType &key) const
-    {
-      const int BIN_SEARCH_THRESHOLD = 128;
-      if (sizeof(n->keys) > BIN_SEARCH_THRESHOLD)
-      {
-        if (n->slot_used == 0) return 0;
+    KeyComparator kcmp;
 
-        int lo = 0, hi = n->slotuse;
+    inline bool key_less(const KeyType &k1, const KeyType &k2) {
+      return kcmp(k1, k2);
+    }
 
-        while (lo < hi)
-        {
-          int mid = (lo + hi) >> 1;
-
-          if (Compare(key, n->keys[mid])) {
-            hi = mid;     // key <= mid
-          }
-          else {
-            lo = mid + 1; // key > mid
-          }
-        }
-
-        return lo;
-      }
-      else // for nodes <= binsearch_threshold do linear search.
-      {
-        int lo = 0;
-        while (lo < n->slotuse && key_less(n->slotkey[lo], key)) ++lo;
-        return lo;
-      }
+    inline bool key_eq(const KeyType &k1, const KeyType &k2) {
+      return !kcmp(k1, k2) && !kcmp(k2, k1);
     }
 
     /**********************
