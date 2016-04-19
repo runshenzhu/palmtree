@@ -6,6 +6,12 @@
 #include <assert.h>
 #include <thread>
 #include <boost/lockfree/queue.hpp>
+#include <boost/thread/barrier.hpp>
+#include <boost/thread.hpp>
+#include <iostream>
+
+using std::cout;
+using std::endl;
 
 #define UNUSED __attribute__((unused))
 
@@ -37,7 +43,7 @@ namespace palmtree {
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 16;
+    static const int NUM_WORKER = 8;
 
   private:
     /**
@@ -117,9 +123,10 @@ namespace palmtree {
 
       // Wait until this operation is done
       inline void wait() {
+        cout << "One thread waiting" << endl;
         while (!done_) {
-          auto sleep_time = std::chrono::microseconds(30);
-          std::this_thread::sleep_for(sleep_time);
+          auto sleep_time = boost::chrono::microseconds(30);
+          boost::this_thread::sleep_for(sleep_time);
         }
       }
     };
@@ -228,18 +235,29 @@ namespace palmtree {
      * before collecting enough tasks, it will partition the work and start the
      * Palm algorithm among the threads.
      * ************************/
+    boost::barrier barrier_;
+    boost::lockfree::queue<TreeOp *> task_queue_;
+
+    void sync() {
+      barrier_.wait();
+    }
 
     struct WorkerThread {
-      WorkerThread(int worker_id): worker_id_(worker_id), done_(false){}
+      WorkerThread(int worker_id, PalmTree *palmtree):
+        worker_id_(worker_id),
+        palmtree_(palmtree),
+        done_(false){}
       // Worker id, the thread with worker id 0 will need to be the coordinator
       int worker_id_;
       // The work for the worker at each stage
       std::vector<TreeOp *> ops_;
       // Spawn a thread and run the worker loop
-      std::thread wthread_;
+      boost::thread wthread_;
+      // The palm tree the worker belong to
+      PalmTree *palmtree_;
       bool done_;
       void start() {
-        wthread_ = std::thread(&WorkerThread::worker_loop, this);
+        wthread_ = boost::thread(&WorkerThread::worker_loop, this);
       }
       void exit() {
         done_ = true;
@@ -247,6 +265,12 @@ namespace palmtree {
       }
       void worker_loop() {
         while (!done_) {
+          if (worker_id_ == 0) {
+
+          } else {
+            cout << "Worker " << worker_id_ << " wait barrier" << endl;
+            palmtree_->sync();
+          }
           // Stage 0, collect work batch and partition
           // Stage 1, Search for leafs
           // Stage 2, redistribute work, read the tree then modify
@@ -255,16 +279,35 @@ namespace palmtree {
         }
       }
     };
-    std::vector<WorkerThread> workers;
-    boost::lockfree::queue<TreeOp *> task_queue;
 
+    std::vector<WorkerThread> workers_;
     /**********************
      * PalmTree public    *
      * ********************/
   public:
-    PalmTree() {
+    PalmTree(): barrier_{NUM_WORKER}, task_queue_{10240} {
+      // Init the root node
       tree_root = new InnerNode();
-    };
+    }
+
+    void init() {
+      // Init the worker thread
+      for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
+        workers_.emplace_back(worker_id, this);
+      }
+
+      for (auto &worker : workers_) {
+         worker.start();
+      }
+    }
+
+    // Recursively free the resources of one tree node
+    void free_recursive(Node *node UNUSED) {
+    }
+
+    ~PalmTree() {
+      free_recursive(tree_root);
+    }
 
     /**
      * @brief Find the value for a key
@@ -273,7 +316,7 @@ namespace palmtree {
      */
     ValueType *find(const KeyType &key UNUSED) {
       TreeOp op(TREE_OP_FIND, key);
-      task_queue.push(&op);
+      task_queue_.push(&op);
 
       op.wait();
 
@@ -285,7 +328,7 @@ namespace palmtree {
      */
     void insert(const KeyType &key UNUSED, const ValueType &value UNUSED) {
       TreeOp op(TREE_OP_INSERT, key, value);
-      task_queue.push(&op);
+      task_queue_.push(&op);
 
       op.wait();
     }
@@ -295,7 +338,7 @@ namespace palmtree {
      */
     void remove(const KeyType &key UNUSED) {
       TreeOp op(TREE_OP_REMOVE, key);
-      task_queue.push(&op);
+      task_queue_.push(&op);
 
       op.wait();
     }
