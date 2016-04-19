@@ -9,6 +9,7 @@
 #include <boost/thread/barrier.hpp>
 #include <boost/thread.hpp>
 #include <iostream>
+#include <glog/logging.h>
 
 using std::cout;
 using std::endl;
@@ -44,6 +45,7 @@ namespace palmtree {
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
     static const int NUM_WORKER = 8;
+    static const int BATCH_SIZE = 256;
 
   private:
     /**
@@ -249,7 +251,7 @@ namespace palmtree {
       // Worker id, the thread with worker id 0 will need to be the coordinator
       int worker_id_;
       // The work for the worker at each stage
-      std::vector<TreeOp *> ops_;
+      std::vector<TreeOp *> current_tasks_;
       // Spawn a thread and run the worker loop
       boost::thread wthread_;
       // The palm tree the worker belong to
@@ -265,18 +267,43 @@ namespace palmtree {
 
       // The #0 thread is responsible to collect tasks to a batch
       void collect_batch() {
-        assert(worker_id == 0);
+        DLOG(INFO) << "Thread " << worker_id_ << " collect tasks";
+        std::vector<TreeOp *>tasks;
+        while (tasks.size() != BATCH_SIZE) {
+          TreeOp *op = nullptr;
+          bool res = palmtree_->task_queue_.pop(op);
+          if (res) {
+            tasks.push_back(op);
+            DLOG(INFO) << "Add one task" << endl;
+          } else
+            boost::this_thread::yield();
+        }
+
+        DLOG(INFO) << "Collected a batch of " << tasks.size();
+
+        // Partition the task among threads
+        const int task_per_thread = tasks.size() / NUM_WORKER;
+        for (int i = 0; i < BATCH_SIZE; i += task_per_thread) {
+          for (int j = 0; j < task_per_thread; j++)
+            palmtree_->workers_[i/task_per_thread].current_tasks_.push_back(tasks[i+j]);
+        }
+
+        // According to the paper, a pre-sort of the batch of tasks might
+        // be benificial
       }
 
+      // Worker loop: process tasks
       void worker_loop() {
         while (!done_) {
           if (worker_id_ == 0) {
             collect_batch();
+            palmtree_->sync();
           } else {
-            cout << "Worker " << worker_id_ << " wait barrier" << endl;
+            DLOG(INFO) << "Worker " << worker_id_ << " wait barrier";
             palmtree_->sync();
           }
           // Stage 0, collect work batch and partition
+          DLOG(INFO) << "Worker " << worker_id_ << " got " << current_tasks_.size() << " tasks";
           // Stage 1, Search for leafs
           // Stage 2, redistribute work, read the tree then modify
           // Stage 3, propagate tree modifications back
@@ -292,10 +319,11 @@ namespace palmtree {
   public:
     PalmTree(): barrier_{NUM_WORKER}, task_queue_{10240} {
       // Init the root node
-      tree_root = new InnerNode();
+      init();
     }
 
     void init() {
+      tree_root = new InnerNode();
       // Init the worker thread
       for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
         workers_.emplace_back(worker_id, this);

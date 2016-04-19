@@ -1,5 +1,5 @@
 CFLAGS=-Werror -Wall -std=c++11
-LDFLAGS=-lboost_atomic-mt -lboost_system-mt -lboost_thread-mt
+LDFLAGS=-lboost_atomic-mt -lboost_system-mt -lboost_thread-mt -lglog
 CC=g++
 
 all: palmtree_test
