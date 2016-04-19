@@ -2,7 +2,10 @@
 
 #include <functional>
 #include <vector>
+#include <chrono>
 #include <assert.h>
+#include <thread>
+#include <boost/lockfree/queue.hpp>
 
 #define UNUSED __attribute__((unused))
 
@@ -33,6 +36,8 @@ namespace palmtree {
     static const int LEAF_MAX_SLOT = 1024;
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
+    // Number of working threads
+    static const int NUM_WORKER = 16;
 
   private:
     /**
@@ -95,15 +100,28 @@ namespace palmtree {
     struct TreeOp {
       // Op can either be none, add or delete
       TreeOp(TreeOpType op_type, const KeyType &key, const ValueType &value):
-        op_type_(op_type), key_(key), value_(value) {};
+        op_type_(op_type), key_(key), value_(value), target_node_(nullptr),
+        result_(nullptr), boolean_result_(false), done_(false) {};
       TreeOp(TreeOpType op_type, const KeyType &key):
-        op_type_(op_type), key_(key) {};
+        op_type_(op_type), key_(key), target_node_(nullptr), result_(nullptr),
+        boolean_result_(false), done_(false) {};
 
       TreeOpType op_type_;
       KeyType key_;
       ValueType value_;
 
       LeafNode *target_node_;
+      ValueType *result_;
+      bool boolean_result_;
+      bool done_;
+
+      // Wait until this operation is done
+      inline void wait() {
+        while (!done_) {
+          auto sleep_time = std::chrono::microseconds(30);
+          std::this_thread::sleep_for(sleep_time);
+        }
+      }
     };
 
     enum ModType {
@@ -182,7 +200,7 @@ namespace palmtree {
         Node *child = ptr->children[idx];
         if (child->type() == LEAFNODE) {
           return (LeafNode *)child;
-        }else {
+        } else {
           ptr = (InnerNode *)child;
         }
       }
@@ -202,7 +220,43 @@ namespace palmtree {
 
     /**************************
      * Concurrent executions **
+     *
+     * Design: we have a potential infinite long task queue, where clients add
+     * requests by calling find, insert or remove. We also have a fixed length
+     * pool of worker threads. One of the thread (thread 0) will collect task form the
+     * work queue, if it has collected enough task for a batch, or has timed out
+     * before collecting enough tasks, it will partition the work and start the
+     * Palm algorithm among the threads.
      * ************************/
+
+    struct WorkerThread {
+      WorkerThread(int worker_id): worker_id_(worker_id), done_(false){}
+      // Worker id, the thread with worker id 0 will need to be the coordinator
+      int worker_id_;
+      // The work for the worker at each stage
+      std::vector<TreeOp *> ops_;
+      // Spawn a thread and run the worker loop
+      std::thread wthread_;
+      bool done_;
+      void start() {
+        wthread_ = std::thread(&WorkerThread::worker_loop, this);
+      }
+      void exit() {
+        done_ = true;
+        wthread_.join();
+      }
+      void worker_loop() {
+        while (!done_) {
+          // Stage 0, collect work batch and partition
+          // Stage 1, Search for leafs
+          // Stage 2, redistribute work, read the tree then modify
+          // Stage 3, propagate tree modifications back
+          // Stage 4, modify the root, re-insert orphands, mark work as done
+        }
+      }
+    };
+    std::vector<WorkerThread> workers;
+    boost::lockfree::queue<TreeOp *> task_queue;
 
     /**********************
      * PalmTree public    *
@@ -214,27 +268,39 @@ namespace palmtree {
 
     /**
      * @brief Find the value for a key
-     * #param key the key to be retrieved
+     * @param key the key to be retrieved
      * @return nullptr if no such k,v pair
      */
     ValueType *find(const KeyType &key UNUSED) {
-      return nullptr;
+      TreeOp op(TREE_OP_FIND, key);
+      task_queue.push(&op);
+
+      op.wait();
+
+      return op.result_;
     }
 
     /**
      * @brief insert a k,v into the tree
      */
     void insert(const KeyType &key UNUSED, const ValueType &value UNUSED) {
-      return;
+      TreeOp op(TREE_OP_INSERT, key, value);
+      task_queue.push(&op);
+
+      op.wait();
     }
 
     /**
      * @brief remove a k,v from the tree
      */
     void remove(const KeyType &key UNUSED) {
+      TreeOp op(TREE_OP_REMOVE, key);
+      task_queue.push(&op);
 
+      op.wait();
     }
   }; // End of PalmTree
+  // Explicit template initialization
   template class PalmTree<int, int>;
 } // End of namespace palmtree
 
