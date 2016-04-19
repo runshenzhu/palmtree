@@ -123,7 +123,6 @@ namespace palmtree {
 
       // Wait until this operation is done
       inline void wait() {
-        cout << "One thread waiting" << endl;
         while (!done_) {
           auto sleep_time = boost::chrono::microseconds(30);
           boost::this_thread::sleep_for(sleep_time);
@@ -263,10 +262,16 @@ namespace palmtree {
         done_ = true;
         wthread_.join();
       }
+
+      // The #0 thread is responsible to collect tasks to a batch
+      void collect_batch() {
+        assert(worker_id == 0);
+      }
+
       void worker_loop() {
         while (!done_) {
           if (worker_id_ == 0) {
-
+            collect_batch();
           } else {
             cout << "Worker " << worker_id_ << " wait barrier" << endl;
             palmtree_->sync();
