@@ -1,3 +1,7 @@
 *.o
 palmtree
 palmtree_test
+configure
+*.log
+build/
+autom4te.cache/
