@@ -43,7 +43,7 @@ namespace palmtree {
       int slot_used;
 
       Node(){};
-      virtual NodeType Type() const = 0;
+      virtual NodeType type() const = 0;
     };
 
     struct InnerNode : public Node {
@@ -53,14 +53,14 @@ namespace palmtree {
       // Pointers for children
       Node *children[INNER_MAX_SLOT];
 
-      virtual NodeType Type() const {
+      virtual NodeType type() const {
         return INNERNODE;
       }
-      inline bool IsFull() const {
+      inline bool is_full() const {
         return Node::slot_used == INNER_MAX_SLOT;
       }
 
-      inline bool IsFew() const {
+      inline bool is_few() const {
         return Node::slot_used < INNER_MAX_SLOT/2;
       }
 
@@ -69,22 +69,23 @@ namespace palmtree {
     struct LeafNode : public Node {
       LeafNode(): prev(nullptr), next(nullptr) {};
 
+      // Leaf layer doubly linked list
       LeafNode *prev;
-
       LeafNode *next;
 
+      // Keys and values for leaf node
       KeyType keys[LEAF_MAX_SLOT];
       ValueType values[LEAF_MAX_SLOT];
 
-      virtual NodeType Type() const {
+      virtual NodeType type() const {
         return LEAFNODE;
       }
 
-      inline bool IsFull() const {
+      inline bool is_full() const {
         return Node::slot_used == LEAF_MAX_SLOT;
       }
 
-      inline bool IsFew() const {
+      inline bool is_few() const {
         return Node::slot_used < LEAF_MAX_SLOT/4;
       }
     };
@@ -92,6 +93,7 @@ namespace palmtree {
      * Tree operation wrappers
      */
     struct TreeOp {
+      // Op can either be none, add or delete
       TreeOp(TreeOpType op_type, const KeyType &key, const ValueType &value):
         op_type_(op_type), key_(key), value_(value) {};
       TreeOp(TreeOpType op_type, const KeyType &key):
@@ -116,10 +118,11 @@ namespace palmtree {
     struct NodeMod {
       NodeMod(ModType type): type_(type) {}
       ModType type_;
-      // Leaf
+      // For leaf modification
       std::vector<std::pair<KeyType, ValueType>> value_items;
-      // Inner
+      // For inner node modification
       std::vector<std::pair<KeyType, Node *>> node_items;
+      // For removed inner nodes
       std::vector<KeyType> orphaned_keys;
     };
 
@@ -127,14 +130,15 @@ namespace palmtree {
    * PalmTree private
    * ******************/
   private:
+    // Root of the palm tree
     Node *tree_root;
-
+    // Key comparator
     KeyComparator kcmp;
-
+    // Return true if k1 < k2
     inline bool key_less(const KeyType &k1, const KeyType &k2) {
       return kcmp(k1, k2);
     }
-
+    // Return true if k1 == k2
     inline bool key_eq(const KeyType &k1, const KeyType &k2) {
       return !kcmp(k1, k2) && !kcmp(k2, k1);
     }
@@ -176,7 +180,7 @@ namespace palmtree {
       for (;;) {
         auto idx = this->BSearch(ptr->keys, ptr->slot_used, key);
         Node *child = ptr->children[idx];
-        if (child->Type() == LEAFNODE) {
+        if (child->type() == LEAFNODE) {
           return (LeafNode *)child;
         }else {
           ptr = (InnerNode *)child;
@@ -208,15 +212,26 @@ namespace palmtree {
       tree_root = new InnerNode();
     };
 
-    ValueType *Find(const KeyType &key UNUSED) {
+    /**
+     * @brief Find the value for a key
+     * #param key the key to be retrieved
+     * @return nullptr if no such k,v pair
+     */
+    ValueType *find(const KeyType &key UNUSED) {
       return nullptr;
     }
 
-    void Insert(const KeyType &key UNUSED, const ValueType &value UNUSED) {
+    /**
+     * @brief insert a k,v into the tree
+     */
+    void insert(const KeyType &key UNUSED, const ValueType &value UNUSED) {
       return;
     }
 
-    void Remove(const KeyType &key UNUSED) {
+    /**
+     * @brief remove a k,v from the tree
+     */
+    void remove(const KeyType &key UNUSED) {
 
     }
   }; // End of PalmTree

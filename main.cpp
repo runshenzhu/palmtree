@@ -8,7 +8,7 @@ using namespace std;
 int main(int argc, char **argv) {
   cout << "hello world" << endl;
   palmtree::PalmTree<string, string> palmtree;
-  string *res = palmtree.Find("hello");
+  string *res = palmtree.find("hello");
   assert(res == nullptr);
 }
 
