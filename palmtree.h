@@ -57,11 +57,13 @@ namespace palmtree {
       int slot_used;
 
       Node(){};
+      virtual ~Node() {};
       virtual NodeType type() const = 0;
     };
 
     struct InnerNode : public Node {
       InnerNode(){};
+      virtual ~InnerNode() {};
       // Keys for children
       KeyType keys[INNER_MAX_SLOT];
       // Pointers for children
@@ -82,6 +84,8 @@ namespace palmtree {
 
     struct LeafNode : public Node {
       LeafNode(): prev(nullptr), next(nullptr) {};
+      virtual ~LeafNode() {};
+
 
       // Leaf layer doubly linked list
       LeafNode *prev;
@@ -115,6 +119,8 @@ namespace palmtree {
       TreeOp(TreeOpType op_type, const KeyType &key, const ValueType &value):
         op_type_(op_type), key_(key), value_(value), target_node_(nullptr),
         result_(nullptr), boolean_result_(false), done_(false) {};
+
+
       TreeOp(TreeOpType op_type, const KeyType &key):
         op_type_(op_type), key_(key), target_node_(nullptr), result_(nullptr),
         boolean_result_(false), done_(false) {};
@@ -183,34 +189,42 @@ namespace palmtree {
     inline bool key_eq(const KeyType &k1, const KeyType &k2) {
       return !kcmp(k1, k2) && !kcmp(k2, k1);
     }
-    // Return the index of the first slot whose key >= @key
+    // Return the index of the largest slot whose key <= @key
     // assume there is no duplicated element
-    int BSearch(const KeyType *input, int size, const KeyType &target) {
-      if (size <= BIN_SEARCH_THRESHOLD) {
-        // few elements, linear search
-        int lo = 0;
-        while (lo < size && key_less(input[lo], target)) ++lo;
-        return lo;
+    int search_helper(const KeyType *input, int size, const KeyType &target) {
+      int res = -1;
+      // loop all element
+      for (int i = 0; i < size; i++) {
+        if(key_less(target, input[i])){
+          // target < input
+          // ignore
+          continue;
+
+        }
+        if (res == -1 || key_less(input[res], input[i])) {
+          res = i;
+        }
+
       }
 
-      int lo = 0, hi = size;
-      while (lo != hi) {
-        int mid = (lo + hi) / 2; // Or a fancy way to avoid int overflow
-        if (key_less(input[mid], target)) {
-          /* This index, and everything below it, must not be the first element
-           * >= than what we're looking for */
-          lo = mid + 1;
-        }
-        else {
-          /* This element is at least as large as the element, so anything after it can't
-           * be the first element that's at least as large.
-           */
-          hi = mid;
+      if(res != -1) {
+        return res;
+      }
+
+      // if all elements are greater than target
+      // return the index slot whose key is smallest
+      // re-scan
+      res = 0;
+      for (int i = 0; i < size; i++) {
+        if(key_less(input[i], input[res])) {
+          res = i;
         }
       }
-      /* Now, low and high both point to the element in question. */
-      return lo;
+
+      return res;
     }
+
+
 
     /**
      * @brief Return the leaf node that contains the @key
@@ -218,9 +232,15 @@ namespace palmtree {
     LeafNode *search(const KeyType &key UNUSED) {
       return nullptr;
       assert(tree_root);
+
+      if (tree_root->type() == LEAFNODE) {
+        return (LeafNode *)tree_root;
+      }
+
       auto ptr = (InnerNode *)tree_root;
       for (;;) {
-        auto idx = this->BSearch(ptr->keys, ptr->slot_used, key);
+        assert(ptr->slot_used > 0);
+        auto idx = this->search_helper(ptr->keys, ptr->slot_used, key);
         Node *child = ptr->children[idx];
         if (child->type() == LEAFNODE) {
           return (LeafNode *)child;
@@ -232,11 +252,33 @@ namespace palmtree {
       assert(0);
     }
 
+    /**
+     * @brief big_split will split the kv pair vector into multiple tree nodes
+     *  that is within the threshold. The actual type of value is templated as V.
+     *  The splited nodes should be stored in Node, respect to appropriate
+     *  node types
+     */
     template<typename V>
     void big_split(std::vector<std::pair<KeyType, V>> &input UNUSED, std::vector<std::pair<KeyType, Node *>> &output UNUSED) {
       std::sort(input.begin(), input.end(), [this](const std::pair<KeyType, V> &p1, const std::pair<KeyType, V> &p2) {
         return key_less(p1.first, p2.first);
       });
+    }
+
+    void add_item_inner(InnerNode *node UNUSED, const KeyType &key UNUSED, Node *child UNUSED) {
+      return;
+    }
+
+    void add_item_leaf(LeafNode *node UNUSED, const KeyType &key UNUSED, const ValueType &val UNUSED) {
+      return;
+    }
+
+    void del_item_inner(InnerNode *node UNUSED, const KeyType &key UNUSED) {
+      return;
+    }
+
+    void del_item_leaf(LeafNode *node UNUSED, const KeyType &key UNUSED) {
+      return;
     }
 
     /**
@@ -246,6 +288,14 @@ namespace palmtree {
      * node modifications are triggered, record them in @new_mods.
      */
     NodeMod modify_node(Node *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
+
+      std::vector<KeyType> K;
+      for (auto& item : mods) {
+        K.insert(K.end(), item.orphaned_keys.begin(), item.orphaned_keys.end());
+        if (item.type_ == MOD_TYPE_ADD) {
+
+        }
+      }
       return NodeMod(MOD_TYPE_NONE);
     }
 
@@ -424,6 +474,13 @@ namespace palmtree {
 
     // Recursively free the resources of one tree node
     void free_recursive(Node *node UNUSED) {
+      if (node->type() == INNERNODE) {
+        auto ptr = (InnerNode *)node;
+        for(int i = 0; i < ptr->slot_used; i++) {
+          free_recursive(ptr->children[i]);
+        }
+      }
+      delete node;
     }
 
     ~PalmTree() {
