@@ -171,7 +171,8 @@ namespace palmtree {
       // For inner node modification
       std::vector<std::pair<KeyType, Node *>> node_items;
       // For removed inner nodes
-      std::vector<KeyType> orphaned_keys;
+      std::vector<std::pair<KeyType, ValueType>> orphaned_kv;
+      std::vector<std::pair<KeyType, Node *>> orphaned_node;
 
     };
 
@@ -321,16 +322,117 @@ namespace palmtree {
      * node modifications are triggered, record them in @new_mods.
      */
     NodeMod modify_node(Node *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
+      if(node->type() == LEAFNODE) {
+        return modify_node_leaf((LeafNode *)node, mods);
+      }else{
+        CHECK(node->type() == INNERNODE) << "unKnown node" << endl;
+        return modify_node_inner((InnerNode *)node, mods);
+      }
 
-      std::vector<KeyType> K;
+    }
+
+
+    NodeMod modify_node_leaf(LeafNode *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
+      NodeMod ret(MOD_TYPE_NONE);
+      auto& kv = ret.orphaned_kv;
+      auto& kn = ret.orphaned_node;
+
+
+      // firstly, we loop all items to save orphaned and count nodes
+      int num = node->slot_used;
       for (auto& item : mods) {
-        K.insert(K.end(), item.orphaned_keys.begin(), item.orphaned_keys.end());
-        if (item.type_ == MOD_TYPE_ADD) {
+        // save all orphaned_*
+        kv.insert(kv.end(), item.orphaned_kv.begin(), item.orphaned_kv.end());
+        kn.insert(kn.end(), item.orphaned_node.begin(), item.orphaned_node.end());
 
+        auto item_size = (int)item.value_items.size();
+        if (item.type_ == MOD_TYPE_ADD) {
+          num += item_size;
+        } else if (item.type_ == MOD_TYPE_DEC) {
+          num -= item_size;
+        } else {
+          assert(item_size == 0);
         }
       }
-      return NodeMod(MOD_TYPE_NONE);
+
+      if (num >= LEAF_MAX_SLOT) {
+        //TODO: split
+        LOG(INFO) << "leafnode will be split"<< endl;
+        assert(0);
+      }else {
+        for (auto& item : mods) {
+          if (item.type_ == MOD_TYPE_ADD) {
+            for (auto& kv : item.value_items) {
+              add_item_leaf(node, kv.first, kv.second);
+            }
+          } else if(item.type_ == MOD_TYPE_DEC) {
+            for (auto& kv : item.value_items) {
+              del_item_leaf(node, kv.first);
+            }
+          }
+        }
+      }
+
+      // what's the signal of merge??
+      // TODO: merge
+      if (node->slot_used == 0) {
+      }
+
+      return ret;
     }
+
+
+    NodeMod modify_node_inner(InnerNode *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
+      NodeMod ret(MOD_TYPE_NONE);
+      auto& kv = ret.orphaned_kv;
+      auto& kn = ret.orphaned_node;
+
+
+      // firstly, we loop all items to save orphaned and count nodes
+      int num = node->slot_used;
+      for (auto& item : mods) {
+        // save all orphaned_*
+        kv.insert(kv.end(), item.orphaned_kv.begin(), item.orphaned_kv.end());
+        kn.insert(kn.end(), item.orphaned_node.begin(), item.orphaned_node.end());
+
+        auto item_size = (int)item.node_items.size();
+        if (item.type_ == MOD_TYPE_ADD) {
+          num += item_size;
+        } else if (item.type_ == MOD_TYPE_DEC) {
+          num -= item_size;
+        } else {
+          assert(item_size == 0);
+        }
+      }
+
+      if (num >= INNER_MAX_SLOT) {
+        //TODO: split
+        LOG(INFO) << "Innernode will be split" << endl;
+        assert(0);
+      }else {
+        for (auto& item : mods) {
+          if (item.type_ == MOD_TYPE_ADD) {
+            for (auto& kv : item.node_items) {
+              add_item_inner(node, kv.first, kv.second);
+            }
+          } else if(item.type_ == MOD_TYPE_DEC) {
+            for (auto& kv : item.value_items) {
+              del_item_inner(node, kv.first);
+            }
+          }
+        }
+      }
+
+      // what's the signal of merge??
+      // TODO: merge
+      if (node->slot_used == 0) {
+      }
+
+      return ret;
+    }
+
+
+
 
     /**************************
      * Concurrent executions **
@@ -506,7 +608,8 @@ namespace palmtree {
             auto &mods = itr->second;
             CHECK(node != nullptr) << "Modifying a null node" << endl;
             auto upper_mod = palmtree_->modify_node(node, mods);
-            if (upper_mod.type_ == MOD_TYPE_NONE && upper_mod.orphaned_keys.empty()) {
+            // FIXME: now we have orphaned_nodes
+            if (upper_mod.type_ == MOD_TYPE_NONE && upper_mod.orphaned_kv.empty()) {
               DLOG(INFO) << "No node modification happened, don't propagate upwards";
               continue;
             }
