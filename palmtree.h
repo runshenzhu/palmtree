@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <vector>
+#include <unordered_map>
 #include <chrono>
 #include <assert.h>
 #include <thread>
@@ -148,6 +149,14 @@ namespace palmtree {
      */
     struct NodeMod {
       NodeMod(ModType type): type_(type) {}
+      NodeMod(const TreeOp &op) {
+        CHECK(op.op_type_ == TREE_OP_FIND) << "NodeMod can convert from a find operation" << endl;
+        if (op.op_type_ == TREE_OP_REMOVE) {
+          this->type_ = MOD_TYPE_DEC;
+        } else {
+          this->type_ = MOD_TYPE_ADD;
+        }
+      }
       ModType type_;
       // For leaf modification
       std::vector<std::pair<KeyType, ValueType>> value_items;
@@ -155,6 +164,7 @@ namespace palmtree {
       std::vector<std::pair<KeyType, Node *>> node_items;
       // For removed inner nodes
       std::vector<KeyType> orphaned_keys;
+
     };
 
   /********************
@@ -222,6 +232,13 @@ namespace palmtree {
       assert(0);
     }
 
+    template<typename V>
+    void big_split(std::vector<std::pair<KeyType, V>> &input UNUSED, std::vector<std::pair<KeyType, Node *>> &output UNUSED) {
+      std::sort(input.begin(), input.end(), [this](const std::pair<KeyType, V> &p1, const std::pair<KeyType, V> &p2) {
+        return key_less(p1.first, p2.first);
+      });
+    }
+
     /**
      * @brief Modify @node by applying node modifications in @modes. If @node
      * is a leaf node, @mods will be a list of add kv and del kv. If @node is
@@ -237,7 +254,7 @@ namespace palmtree {
      *
      * Design: we have a potential infinite long task queue, where clients add
      * requests by calling find, insert or remove. We also have a fixed length
-     * pool of worker threads. One of the thread (thread 0) will collect task form the
+     * pool of worker threads. One of the thread (thread 0) will collect task from the
      * work queue, if it has collected enough task for a batch, or has timed out
      * before collecting enough tasks, it will partition the work and start the
      * Palm algorithm among the threads.
@@ -260,6 +277,12 @@ namespace palmtree {
       int worker_id_;
       // The work for the worker at each stage
       std::vector<TreeOp *> current_tasks_;
+      // Node modifications on the current layer, mapping from node pointer to the
+      // modification list of that node.
+      std::unordered_map<Node *, std::vector<NodeMod>> cur_node_mods_;
+      // Node modifications on the upper layer. This is typically generate by
+      // modify_node()
+      std::unordered_map<Node *, std::vector<NodeMod>> upper_node_mods_;
       // Spawn a thread and run the worker loop
       boost::thread wthread_;
       // The palm tree the worker belong to
@@ -302,11 +325,16 @@ namespace palmtree {
         // be beneficial
       }
 
-      // Redistribute the tasks on leaf node
-      void redistribute_leaf_tasks(std::multimap<Node *, TreeOp *> &my_tasks) {
+      // Redistribute the tasks on leaf node, filter any read only task
+      void redistribute_leaf_tasks(std::unordered_map<Node *, std::vector<NodeMod>> &my_tasks) {
         // First add current tasks
         for (auto op : current_tasks_) {
-          my_tasks.emplace(op->target_node_, op);
+          if (op->op_type_ != TREE_OP_FIND) {
+            if (my_tasks.find(op->target_node_) == my_tasks.end()) {
+              my_tasks.emplace(op->target_node_, std::vector<NodeMod>());
+            }
+            my_tasks[op->target_node_].push_back(NodeMod(*op));
+          }
         }
 
         // Then remove nodes that don't belong to the current worker
@@ -321,8 +349,8 @@ namespace palmtree {
         for (int i = worker_id_+1; i < NUM_WORKER; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
           for (auto op : wthread.current_tasks_) {
-            if (my_tasks.find(op->target_node_) != my_tasks.end()) {
-              my_tasks.insert(std::make_pair(op->target_node_, op));
+            if (my_tasks.find(op->target_node_) != my_tasks.end() && op->op_type_ != TREE_OP_FIND) {
+              my_tasks[op->target_node_].push_back(NodeMod(*op));
             }
           }
         }
@@ -354,11 +382,17 @@ namespace palmtree {
           // Stage 2, redistribute work, read the tree then modify, each thread
           // will handle the nodes it has searched for, except the nodes that
           // have been handled by workers whose worker_id is less than me.
-          // Currently we use a multiple to record the ownership of tasks upon
+          // Currently we use a unordered_map to record the ownership of tasks upon
           // certain nodes.
-          std::multimap<Node *, TreeOp *> my_tasks;
+          std::unordered_map<Node *, std::vector<NodeMod>> my_tasks;
           redistribute_leaf_tasks(my_tasks);
           // Modify nodes
+          for (auto itr = my_tasks.begin() ; itr != my_tasks.end(); itr++) {
+            auto node = itr->first;
+            auto &mods = itr->second;
+            CHECK(node != nullptr) << "Modifying a null node" << endl;
+            auto upper_mod = palmtree_->modify_node(node, mods);
+          }
 
           // Stage 3, propagate tree modifications back
           // Stage 4, modify the root, re-insert orphands, mark work as done
