@@ -55,8 +55,10 @@ namespace palmtree {
     struct Node {
       // Number of actually used slots
       int slot_used;
+      Node *parent;
 
-      Node(){};
+      Node(): slot_used(0), parent(nullptr){};
+      Node(Node *p): slot_used(0), parent(p){};
       virtual ~Node() {};
       virtual NodeType type() const = 0;
     };
@@ -223,8 +225,6 @@ namespace palmtree {
 
       return res;
     }
-
-
 
     /**
      * @brief Return the leaf node that contains the @key
@@ -408,24 +408,55 @@ namespace palmtree {
         DLOG(INFO) << "Worker " << worker_id_ << " has " << my_tasks.size() << " after task redistribution";
       }
 
+      // Redistribute the tasks on inner node
+      void redistribute_inner_tasks() {
+        cur_node_mods_ = upper_node_mods_;
+
+        // discard
+        for (int i = 0; i < worker_id_; i++) {
+          auto &wthread = palmtree_->workers_[i];
+          for (auto other_itr = wthread.upper_node_mods_.begin(); other_itr != wthread.upper_node_mods_.end(); other_itr++) {
+            cur_node_mods_.erase(other_itr->first);
+          }
+        }
+
+        // Steal work from other threads
+        for (int i = worker_id_+1; i < NUM_WORKER; i++) {
+          auto &wthread = palmtree_->workers_[i];
+          for (auto other_itr = wthread.upper_node_mods_.begin(); other_itr != wthread.upper_node_mods_.end(); other_itr++) {
+            auto itr = cur_node_mods_.find(other_itr->first);
+            if (itr != cur_node_mods_.end()) {
+              auto &my_mods = itr->second;
+              auto &other_mods = other_itr->second;
+              my_mods.insert(my_mods.end(), other_mods.begin(), other_mods.end());
+            }
+          }
+        }
+      }
+
+      // Handle root modifications
+      void handle_root() {
+      }
+
       // Worker loop: process tasks
       void worker_loop() {
         while (!done_) {
           // Stage 0, collect work batch and partition
-          DLOG_IF(INFO, worker_id_ == 0) << "Stage 0" << endl;
+          DLOG_IF(INFO, worker_id_ == 0) << "Stage 0";
           if (worker_id_ == 0) {
             collect_batch();
           }
           palmtree_->sync();
+          DLOG_IF(INFO, worker_id_ == 0) << "Stage 0 finished";
           // Stage 1, Search for leafs
           DLOG(INFO) << "Worker " << worker_id_ << " got " << current_tasks_.size() << " tasks";
           DLOG_IF(INFO, worker_id_ == 0) << "Stage 1: search for leaves";
           for (auto op : current_tasks_) {
-             op->target_node_ = palmtree_->search(op->key_);
-             if (op->op_type_ == TREE_OP_FIND) {
-               if (op->target_node_ != nullptr) // It should not be nullptr, but now we are rapidly developing!
-                 op->result_ = op->target_node_->get_value(op->key_);
-             }
+            op->target_node_ = palmtree_->search(op->key_);
+            if (op->op_type_ == TREE_OP_FIND) {
+              if (op->target_node_ != nullptr) // It should not be nullptr, but now we are rapidly developing!
+                op->result_ = op->target_node_->get_value(op->key_);
+            }
           }
           palmtree_->sync();
           DLOG_IF(INFO, worker_id_ == 0) << "Stage 1 finished";
@@ -442,10 +473,32 @@ namespace palmtree {
             auto &mods = itr->second;
             CHECK(node != nullptr) << "Modifying a null node" << endl;
             auto upper_mod = palmtree_->modify_node(node, mods);
+            if (upper_mod.type_ == MOD_TYPE_NONE && upper_mod.orphaned_keys.empty()) {
+              DLOG(INFO) << "No node modification happened, don't propagate upwards";
+              continue;
+            }
+            DLOG(INFO) << "Add node modification " << upper_mod.type_ << " to upper layer";
+            auto res = upper_node_mods_.find(node->parent);
+            if (res == upper_node_mods_.end()) {
+              upper_node_mods_.emplace(node->parent, std::vector<NodeMod>());
+              upper_node_mods_[node->parent].push_back(upper_mod);
+            } else {
+              res->second.push_back(upper_mod);
+            }
+          }
+          palmtree_->sync();
+          DLOG_IF(INFO, worker_id_ == 0) << "Stage 2 finished";
+          // Stage 3, propagate tree modifications back
+          redistribute_inner_tasks();
+          // Stage 4, modify the root, re-insert orphaned, mark work as done
+          if (worker_id_ == 0) {
+            handle_root();
           }
 
-          // Stage 3, propagate tree modifications back
-          // Stage 4, modify the root, re-insert orphands, mark work as done
+          // Mark tasks as done
+          for (auto op : current_tasks_) {
+            op->done_ = true;
+          }
         }
       }
     };
