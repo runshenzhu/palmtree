@@ -56,11 +56,13 @@ namespace palmtree {
       int slot_used;
 
       Node(){};
+      virtual ~Node() {};
       virtual NodeType type() const = 0;
     };
 
     struct InnerNode : public Node {
       InnerNode(){};
+      virtual ~InnerNode() {};
       // Keys for children
       KeyType keys[INNER_MAX_SLOT];
       // Pointers for children
@@ -81,6 +83,8 @@ namespace palmtree {
 
     struct LeafNode : public Node {
       LeafNode(): prev(nullptr), next(nullptr) {};
+      virtual ~LeafNode() {};
+
 
       // Leaf layer doubly linked list
       LeafNode *prev;
@@ -110,6 +114,8 @@ namespace palmtree {
       TreeOp(TreeOpType op_type, const KeyType &key, const ValueType &value):
         op_type_(op_type), key_(key), value_(value), target_node_(nullptr),
         result_(nullptr), boolean_result_(false), done_(false) {};
+
+
       TreeOp(TreeOpType op_type, const KeyType &key):
         op_type_(op_type), key_(key), target_node_(nullptr), result_(nullptr),
         boolean_result_(false), done_(false) {};
@@ -327,6 +333,13 @@ namespace palmtree {
 
     // Recursively free the resources of one tree node
     void free_recursive(Node *node UNUSED) {
+      if (node->type() == INNERNODE) {
+        auto ptr = (InnerNode *)node;
+        for(int i = 0; i < ptr->slot_used; i++) {
+          free_recursive(ptr->children[i]);
+        }
+      }
+      delete node;
     }
 
     ~PalmTree() {
