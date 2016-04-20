@@ -177,7 +177,6 @@ namespace palmtree {
     // Return the index of the largest slot whose key <= @key
     // assume there is no duplicated element
     int search_helper(const KeyType *input, int size, const KeyType &target) {
-      assert(size > 0);
       int res = -1;
       // loop all element
       for (int i = 0; i < size; i++) {
