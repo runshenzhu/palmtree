@@ -101,6 +101,10 @@ namespace palmtree {
       inline bool is_few() const {
         return Node::slot_used < LEAF_MAX_SLOT/4;
       }
+
+      inline ValueType *get_value(const KeyType &key UNUSED) {
+        return &values[0];
+      }
     };
     /**
      * Tree operation wrappers
@@ -124,10 +128,11 @@ namespace palmtree {
       bool done_;
 
       // Wait until this operation is done
+      // Now use busy waiting, should use something more smart. But be careful
+      // that conditional variable could be very expensive
       inline void wait() {
         while (!done_) {
-          auto sleep_time = boost::chrono::microseconds(30);
-          boost::this_thread::sleep_for(sleep_time);
+          boost::this_thread::sleep_for(boost::chrono::milliseconds(10));
         }
       }
     };
@@ -201,6 +206,7 @@ namespace palmtree {
      * @brief Return the leaf node that contains the @key
      */
     LeafNode *search(const KeyType &key UNUSED) {
+      return nullptr;
       assert(tree_root);
       auto ptr = (InnerNode *)tree_root;
       for (;;) {
@@ -238,6 +244,8 @@ namespace palmtree {
      * ************************/
     boost::barrier barrier_;
     boost::lockfree::queue<TreeOp *> task_queue_;
+    // The current batch that is being processed
+    std::vector<TreeOp *> current_batch_;
 
     void sync() {
       barrier_.wait();
@@ -268,44 +276,90 @@ namespace palmtree {
       // The #0 thread is responsible to collect tasks to a batch
       void collect_batch() {
         DLOG(INFO) << "Thread " << worker_id_ << " collect tasks";
-        std::vector<TreeOp *>tasks;
-        while (tasks.size() != BATCH_SIZE) {
+        palmtree_->current_batch_.clear();
+        while (palmtree_->current_batch_.size() != BATCH_SIZE) {
           TreeOp *op = nullptr;
           bool res = palmtree_->task_queue_.pop(op);
           if (res) {
-            tasks.push_back(op);
-            DLOG(INFO) << "Add one task" << endl;
+            palmtree_->current_batch_.push_back(op);
           } else
-            boost::this_thread::yield();
+            boost::this_thread::sleep_for(boost::chrono::milliseconds(100));
         }
 
-        DLOG(INFO) << "Collected a batch of " << tasks.size();
+        DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_.size();
 
         // Partition the task among threads
-        const int task_per_thread = tasks.size() / NUM_WORKER;
+        const int task_per_thread = palmtree_->current_batch_.size() / NUM_WORKER;
         for (int i = 0; i < BATCH_SIZE; i += task_per_thread) {
+          // Clear old tasks
+          palmtree_->workers_[i/task_per_thread].current_tasks_.clear();
           for (int j = 0; j < task_per_thread; j++)
-            palmtree_->workers_[i/task_per_thread].current_tasks_.push_back(tasks[i+j]);
+            palmtree_->workers_[i/task_per_thread].current_tasks_
+              .push_back(palmtree_->current_batch_[i+j]);
         }
 
         // According to the paper, a pre-sort of the batch of tasks might
-        // be benificial
+        // be beneficial
+      }
+
+      // Redistribute the tasks on leaf node
+      void redistribute_leaf_tasks(std::multimap<Node *, TreeOp *> &my_tasks) {
+        // First add current tasks
+        for (auto op : current_tasks_) {
+          my_tasks.emplace(op->target_node_, op);
+        }
+
+        // Then remove nodes that don't belong to the current worker
+        for (int i = 0; i < worker_id_; i++) {
+          WorkerThread &wthread = palmtree_->workers_[i];
+          for (auto op : wthread.current_tasks_) {
+            my_tasks.erase(op->target_node_);
+          }
+        }
+
+        // Then add the operations that belongs to a node of mine
+        for (int i = worker_id_+1; i < NUM_WORKER; i++) {
+          WorkerThread &wthread = palmtree_->workers_[i];
+          for (auto op : wthread.current_tasks_) {
+            if (my_tasks.find(op->target_node_) != my_tasks.end()) {
+              my_tasks.insert(std::make_pair(op->target_node_, op));
+            }
+          }
+        }
+
+        DLOG(INFO) << "Worker " << worker_id_ << " has " << my_tasks.size() << " after task redistribution";
       }
 
       // Worker loop: process tasks
       void worker_loop() {
         while (!done_) {
+          // Stage 0, collect work batch and partition
+          DLOG_IF(INFO, worker_id_ == 0) << "Stage 0" << endl;
           if (worker_id_ == 0) {
             collect_batch();
-            palmtree_->sync();
-          } else {
-            DLOG(INFO) << "Worker " << worker_id_ << " wait barrier";
-            palmtree_->sync();
           }
-          // Stage 0, collect work batch and partition
-          DLOG(INFO) << "Worker " << worker_id_ << " got " << current_tasks_.size() << " tasks";
+          palmtree_->sync();
           // Stage 1, Search for leafs
-          // Stage 2, redistribute work, read the tree then modify
+          DLOG(INFO) << "Worker " << worker_id_ << " got " << current_tasks_.size() << " tasks";
+          DLOG_IF(INFO, worker_id_ == 0) << "Stage 1: search for leaves";
+          for (auto op : current_tasks_) {
+             op->target_node_ = palmtree_->search(op->key_);
+             if (op->op_type_ == TREE_OP_FIND) {
+               if (op->target_node_ != nullptr) // It should not be nullptr, but now we are rapidly developing!
+                 op->result_ = op->target_node_->get_value(op->key_);
+             }
+          }
+          palmtree_->sync();
+          DLOG_IF(INFO, worker_id_ == 0) << "Stage 1 finished";
+          // Stage 2, redistribute work, read the tree then modify, each thread
+          // will handle the nodes it has searched for, except the nodes that
+          // have been handled by workers whose worker_id is less than me.
+          // Currently we use a multiple to record the ownership of tasks upon
+          // certain nodes.
+          std::multimap<Node *, TreeOp *> my_tasks;
+          redistribute_leaf_tasks(my_tasks);
+          // Modify nodes
+
           // Stage 3, propagate tree modifications back
           // Stage 4, modify the root, re-insert orphands, mark work as done
         }
@@ -340,6 +394,9 @@ namespace palmtree {
 
     ~PalmTree() {
       free_recursive(tree_root);
+      for (auto &worker : workers_) {
+        worker.exit();
+      }
     }
 
     /**
