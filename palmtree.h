@@ -218,7 +218,7 @@ namespace palmtree {
       assert(tree_root);
 
       if (tree_root->type() == LEAFNODE) {
-        return tree_root;
+        return (LeafNode *)tree_root;
       }
 
       auto ptr = (InnerNode *)tree_root;
@@ -236,12 +236,29 @@ namespace palmtree {
       assert(0);
     }
 
-    /**
-     * @brief Modify @node by applying node modifications in @modes. If @node
-     * is a leaf node, @mods will be a list of add kv and del kv. If @node is
-     * a inner node, @mods will be a list of add range and del range. If new
-     * node modifications are triggered, record them in @new_mods.
-     */
+    void add_item_inner(InnerNode *node UNUSED, const KeyType &key UNUSED, Node *child UNUSED) {
+      return;
+    }
+
+    void add_item_leaf(LeafNode *node UNUSED, const KeyType &key UNUSED, const ValueType &val UNUSED) {
+      return;
+    }
+
+    void del_item_inner(InnerNode *node UNUSED, const KeyType &key UNUSED) {
+      return;
+    }
+
+    void del_item_leaf(LeafNode *node UNUSED, const KeyType &key UNUSED) {
+      return;
+    }
+
+
+      /**
+       * @brief Modify @node by applying node modifications in @modes. If @node
+       * is a leaf node, @mods will be a list of add kv and del kv. If @node is
+       * a inner node, @mods will be a list of add range and del range. If new
+       * node modifications are triggered, record them in @new_mods.
+       */
     NodeMod modify_node(Node *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
 
       std::vector<KeyType> K;
