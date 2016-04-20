@@ -67,7 +67,7 @@ namespace palmtree {
       // Keys for children
       KeyType keys[INNER_MAX_SLOT];
       // Pointers for children
-      Node *children[INNER_MAX_SLOT];
+      Node *children[INNER_MAX_SLOT+1];
 
       virtual NodeType type() const {
         return INNERNODE;
@@ -93,7 +93,7 @@ namespace palmtree {
 
       // Keys and values for leaf node
       KeyType keys[LEAF_MAX_SLOT];
-      ValueType values[LEAF_MAX_SLOT];
+      ValueType values[LEAF_MAX_SLOT+1];
 
       virtual NodeType type() const {
         return LEAFNODE;
@@ -189,7 +189,7 @@ namespace palmtree {
     inline bool key_eq(const KeyType &k1, const KeyType &k2) {
       return !kcmp(k1, k2) && !kcmp(k2, k1);
     }
-    // Return the index of the largest slot whose key <= @key
+    // Return the index of the largest slot whose key <= @target
     // assume there is no duplicated element
     int search_helper(const KeyType *input, int size, const KeyType &target) {
       int res = -1;
