@@ -209,20 +209,6 @@ namespace palmtree {
 
       }
 
-      if(res != -1) {
-        return res;
-      }
-
-      // if all elements are greater than target
-      // return the index slot whose key is smallest
-      // re-scan
-      res = 0;
-      for (int i = 0; i < size; i++) {
-        if(key_less(input[i], input[res])) {
-          res = i;
-        }
-      }
-
       return res;
     }
 
@@ -230,8 +216,6 @@ namespace palmtree {
      * @brief Return the leaf node that contains the @key
      */
     LeafNode *search(const KeyType &key UNUSED) {
-      return nullptr;
-      assert(tree_root);
 
       if (tree_root->type() == LEAFNODE) {
         return (LeafNode *)tree_root;
@@ -241,6 +225,9 @@ namespace palmtree {
       for (;;) {
         assert(ptr->slot_used > 0);
         auto idx = this->search_helper(ptr->keys, ptr->slot_used, key);
+        if (idx == -1) {
+          idx = INNER_MAX_SLOT;
+        }
         Node *child = ptr->children[idx];
         if (child->type() == LEAFNODE) {
           return (LeafNode *)child;
