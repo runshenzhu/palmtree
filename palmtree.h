@@ -174,10 +174,11 @@ namespace palmtree {
     inline bool key_eq(const KeyType &k1, const KeyType &k2) {
       return !kcmp(k1, k2) && !kcmp(k2, k1);
     }
-    // Return the index of the smallest slot whose key <= @key
+    // Return the index of the largest slot whose key <= @key
     // assume there is no duplicated element
-    int SearchHelper(const KeyType *input, int size, const KeyType &target) {
-      int res = size;
+    int search_helper(const KeyType *input, int size, const KeyType &target) {
+      assert(size > 0);
+      int res = -1;
       // loop all element
       for (int i = 0; i < size; i++) {
         if(key_less(target, input[i])){
@@ -186,22 +187,45 @@ namespace palmtree {
           continue;
 
         }
-        if (res == size || key_less(input[i], input[res])) {
+        if (res == -1 || key_less(input[res], input[i])) {
           res = i;
         }
 
       }
+
+      if(res != -1) {
+        return res;
+      }
+
+      // if all elements are greater than target
+      // return the index slot whose key is smallest
+      // re-scan
+      res = 0;
+      for (int i = 0; i < size; i++) {
+        if(key_less(input[i], input[res])) {
+          res = i;
+        }
+      }
+
       return res;
     }
+
+
 
     /**
      * @brief Return the leaf node that contains the @key
      */
     LeafNode *search(const KeyType &key UNUSED) {
       assert(tree_root);
+
+      if (tree_root->type() == LEAFNODE) {
+        return tree_root;
+      }
+
       auto ptr = (InnerNode *)tree_root;
       for (;;) {
-        auto idx = this->SearchHelper(ptr->keys, ptr->slot_used, key);
+        assert(ptr->slot_used > 0);
+        auto idx = this->search_helper(ptr->keys, ptr->slot_used, key);
         Node *child = ptr->children[idx];
         if (child->type() == LEAFNODE) {
           return (LeafNode *)child;
@@ -220,6 +244,14 @@ namespace palmtree {
      * node modifications are triggered, record them in @new_mods.
      */
     NodeMod modify_node(Node *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
+
+      std::vector<KeyType> K;
+      for (auto& item : mods) {
+        K.insert(K.end(), item.orphaned_keys.begin(), item.orphaned_keys.end());
+        if (item.type_ == MOD_TYPE_ADD) {
+
+        }
+      }
       return NodeMod(MOD_TYPE_NONE);
     }
 
