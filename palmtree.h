@@ -69,7 +69,7 @@ namespace palmtree {
       // Keys for children
       KeyType keys[INNER_MAX_SLOT];
       // Pointers for children
-      Node *children[INNER_MAX_SLOT+1];
+      Node *children[INNER_MAX_SLOT];
 
       virtual NodeType type() const {
         return INNERNODE;
@@ -207,7 +207,6 @@ namespace palmtree {
         if (res == -1 || key_less(input[res], input[i])) {
           res = i;
         }
-
       }
 
       return res;
@@ -218,17 +217,11 @@ namespace palmtree {
      */
     LeafNode *search(const KeyType &key UNUSED) {
 
-      if (tree_root->type() == LEAFNODE) {
-        return (LeafNode *)tree_root;
-      }
-
       auto ptr = (InnerNode *)tree_root;
       for (;;) {
         assert(ptr->slot_used > 0);
         auto idx = this->search_helper(ptr->keys, ptr->slot_used, key);
-        if (idx == -1) {
-          idx = INNER_MAX_SLOT;
-        }
+        CHECK(idx != -1) << "search innerNode fail" << endl;
         Node *child = ptr->children[idx];
         if (child->type() == LEAFNODE) {
           return (LeafNode *)child;
