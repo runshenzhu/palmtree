@@ -253,18 +253,64 @@ namespace palmtree {
     }
 
     void add_item_inner(InnerNode *node UNUSED, const KeyType &key UNUSED, Node *child UNUSED) {
+      auto idx = node->slot_used++;
+      node->keys[idx] = key;
+      node->children[idx] = child;
       return;
     }
 
     void add_item_leaf(LeafNode *node UNUSED, const KeyType &key UNUSED, const ValueType &val UNUSED) {
+      auto idx = node->slot_used++;
+      node->keys[idx] = key;
+      node->values[idx] = val;
       return;
     }
 
     void del_item_inner(InnerNode *node UNUSED, const KeyType &key UNUSED) {
+      auto lastIdx = node->slot_used - 1;
+      auto idx = search_helper(node->keys, node->slot_used, key);
+      DLOG(INFO) << "search in del, idx: " << idx;
+      if (idx == -1 || !key_eq(node->keys[idx], key)) {
+        DLOG(WARNING) << "del fail, can't find key in node";
+        return;
+      }
+
+      // if it's the last element
+      // just pop it
+      if (idx == lastIdx) {
+        node->slot_used--;
+        return;
+      }
+
+      // otherwise, swap
+      node->keys[idx] = node->keys[lastIdx];
+      node->children[idx] = node->children[lastIdx];
+
+      node->slot_used--;
       return;
     }
 
     void del_item_leaf(LeafNode *node UNUSED, const KeyType &key UNUSED) {
+      auto lastIdx = node->slot_used - 1;
+      auto idx = search_helper(node->keys, node->slot_used, key);
+      DLOG(INFO) << "search in del, idx: " << idx;
+      if (idx == -1 || !key_eq(node->keys[idx], key)) {
+        DLOG(WARNING) << "del fail, can't find key in node";
+        return;
+      }
+
+      // if it's the last element
+      // just pop it
+      if (idx == lastIdx) {
+        node->slot_used--;
+        return;
+      }
+
+      // otherwise, swap
+      node->keys[idx] = node->keys[lastIdx];
+      node->values[idx] = node->values[lastIdx];
+
+      node->slot_used--;
       return;
     }
 
