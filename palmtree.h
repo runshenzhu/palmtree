@@ -3,6 +3,7 @@
 #include <functional>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <chrono>
 #include <assert.h>
 #include <thread>
@@ -10,6 +11,7 @@
 #include <boost/thread/barrier.hpp>
 #include <boost/thread.hpp>
 #include <iostream>
+#include <memory>
 #include <glog/logging.h>
 
 using std::cout;
@@ -121,11 +123,11 @@ namespace palmtree {
       // Op can either be none, add or delete
       TreeOp(TreeOpType op_type, const KeyType &key, const ValueType &value):
         op_type_(op_type), key_(key), value_(value), target_node_(nullptr),
-        result_(nullptr), boolean_result_(false), done_(false) {};
+        boolean_result_(false), done_(false) {};
 
 
       TreeOp(TreeOpType op_type, const KeyType &key):
-        op_type_(op_type), key_(key), target_node_(nullptr), result_(nullptr),
+        op_type_(op_type), key_(key), target_node_(nullptr),
         boolean_result_(false), done_(false) {};
 
       TreeOpType op_type_;
@@ -133,7 +135,7 @@ namespace palmtree {
       ValueType value_;
 
       LeafNode *target_node_;
-      ValueType *result_;
+      ValueType result_;
       bool boolean_result_;
       bool done_;
 
@@ -162,8 +164,10 @@ namespace palmtree {
         CHECK(op.op_type_ == TREE_OP_FIND) << "NodeMod can't convert from a find operation" << endl;
         if (op.op_type_ == TREE_OP_REMOVE) {
           this->type_ = MOD_TYPE_DEC;
+          this->value_items.emplace_back(std::make_pair(op.key_, ValueType()));
         } else {
           this->type_ = MOD_TYPE_ADD;
+          this->value_items.emplace_back(std::make_pair(op.key_, op.value_));
         }
       }
       ModType type_;
@@ -577,6 +581,10 @@ namespace palmtree {
       return ret;
     }
 
+    void ensure_min_range(InnerNode *node UNUSED) {
+
+    }
+
     /**************************
      * Concurrent executions **
      *
@@ -724,7 +732,45 @@ namespace palmtree {
        *  out the todo node modifications on the #0 layer
        *  */
       void resolve_hazards(const std::unordered_map<Node *, std::vector<TreeOp *>> &tree_ops UNUSED) {
-
+        auto &leaf_mods = node_mods_[0];
+        std::unordered_map<KeyType, ValueType> changed_values;
+        std::unordered_set<KeyType> deleted;
+        for (auto itr = tree_ops.begin(); itr != tree_ops.end(); itr++) {
+          LeafNode *leaf = static_cast<LeafNode *>(itr->first);
+          auto &ops = itr->second;
+          for (auto op : ops) {
+            if (op->op_type_ == TREE_OP_FIND) {
+              if (deleted.find(op->key_) != deleted.end()) {
+                op->boolean_result_ = false;
+              } else {
+                if (changed_values.count(op->key_) != 0) {
+                  op->result_ = changed_values[op->key_];
+                  op->boolean_result_ = true;
+                } else {
+                  auto vp = leaf->get_value(op->key_);
+                  if (vp == nullptr) {
+                    op->boolean_result_ = false;
+                  } else {
+                    op->result_ = *vp;
+                    op->boolean_result_ = true;
+                  }
+                }
+              }
+            } else if (op->op_type_ == TREE_OP_INSERT) {
+              deleted.erase(op->key_);
+              changed_values[op->key_] = op->value_;
+              if (leaf_mods.count(leaf) == 0)
+                leaf_mods.emplace(leaf, std::vector<NodeMod>());
+              leaf_mods[leaf].push_back(NodeMod(*op));
+            } else {
+              CHECK(op->op_type_ == TREE_OP_REMOVE) << "Invalid tree operation";
+              changed_values.erase(op->key_);
+              if (leaf_mods.count(leaf) == 0)
+                leaf_mods.emplace(leaf, std::vector<NodeMod>());
+              leaf_mods[leaf].push_back(NodeMod(*op));
+            }
+          }
+        }
       }
 
       /**
@@ -753,8 +799,16 @@ namespace palmtree {
             palmtree_->add_item_inner(new_root, itr->first, itr->second);
           }
           palmtree_->tree_root = new_root;
+          palmtree_->tree_depth_ += 1;
         }
-
+        // Merge root if neccessary
+        if (palmtree_->tree_depth_ >= 2 && palmtree_->tree_root->slot_used == 1) {
+          // Decrease root height
+          auto old_root = static_cast<InnerNode *>(palmtree_->tree_root);
+          palmtree_->tree_root = old_root->children[0];
+          delete old_root;
+          palmtree_->ensure_min_range(static_cast<InnerNode *>(palmtree_->tree_root));
+        }
         // Naively insert orphaned
         for (auto itr = new_mod.orphaned_kv.begin(); itr != new_mod.orphaned_kv.end(); itr++) {
           auto leaf = palmtree_->search(itr->first);
@@ -777,10 +831,6 @@ namespace palmtree {
           DLOG_IF(INFO, worker_id_ == 0) << "Stage 1: search for leaves";
           for (auto op : current_tasks_) {
             op->target_node_ = palmtree_->search(op->key_);
-            if (op->op_type_ == TREE_OP_FIND) {
-              if (op->target_node_ != nullptr) // It should not be nullptr, but now we are rapidly developing!
-                op->result_ = op->target_node_->get_value(op->key_);
-            }
           }
           palmtree_->sync();
           DLOG_IF(INFO, worker_id_ == 0) << "Stage 1 finished";
@@ -895,13 +945,14 @@ namespace palmtree {
      * @param key the key to be retrieved
      * @return nullptr if no such k,v pair
      */
-    ValueType *find(const KeyType &key UNUSED) {
+    bool find(const KeyType &key UNUSED, ValueType &value) {
       TreeOp op(TREE_OP_FIND, key);
       task_queue_.push(&op);
 
       op.wait();
-
-      return op.result_;
+      if (op.boolean_result_)
+        value = op.result_;
+      return op.boolean_result_;
     }
 
     /**

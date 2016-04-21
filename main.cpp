@@ -19,8 +19,9 @@ int main(int argc, char *argv[]) {
   std::vector<std::thread> threads;
   for (int i = 0; i < 256; i++) {
     threads.push_back(std::thread([palmtreep]() {
-      string *res = palmtreep->find("hello");
-      assert(res == nullptr);
+      string res;
+      bool success = palmtreep->find("hello", res);
+      assert(success == false);
     }));
   }
 
