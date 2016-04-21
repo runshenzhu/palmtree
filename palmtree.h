@@ -48,7 +48,7 @@ namespace palmtree {
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
     static const int NUM_WORKER = 1;
-    static const int BATCH_SIZE = 256;
+    static const int BATCH_SIZE = 1;
 
   private:
     /**
@@ -163,7 +163,7 @@ namespace palmtree {
     struct NodeMod {
       NodeMod(ModType type): type_(type) {}
       NodeMod(const TreeOp &op) {
-        CHECK(op.op_type_ == TREE_OP_FIND) << "NodeMod can't convert from a find operation" << endl;
+        CHECK(op.op_type_ != TREE_OP_FIND) << "NodeMod can't convert from a find operation" << endl;
         if (op.op_type_ == TREE_OP_REMOVE) {
           this->type_ = MOD_TYPE_DEC;
           this->value_items.emplace_back(std::make_pair(op.key_, ValueType()));
@@ -654,6 +654,8 @@ namespace palmtree {
         worker_id_(worker_id),
         palmtree_(palmtree),
         done_(false) {
+          // Initialize 2 layers of modifications
+          node_mods_.push_back(NodeModsMapType());
           node_mods_.push_back(NodeModsMapType());
         }
       // Worker id, the thread with worker id 0 will need to be the coordinator
@@ -710,12 +712,10 @@ namespace palmtree {
       void redistribute_leaf_tasks(std::unordered_map<Node *, std::vector<TreeOp *>> &result) {
         // First add current tasks
         for (auto op : current_tasks_) {
-          if (op->op_type_ != TREE_OP_FIND) {
-            if (result.find(op->target_node_) == result.end()) {
-              result.emplace(op->target_node_, std::vector<TreeOp *>());
-            }
-            result[op->target_node_].push_back(op);
+          if (result.find(op->target_node_) == result.end()) {
+            result.emplace(op->target_node_, std::vector<TreeOp *>());
           }
+          result[op->target_node_].push_back(op);
         }
 
         // Then remove nodes that don't belong to the current worker
@@ -736,7 +736,7 @@ namespace palmtree {
           }
         }
 
-        DLOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " after task redistribution";
+        DLOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution";
       }
 
       /**
@@ -896,6 +896,7 @@ namespace palmtree {
           std::unordered_map<Node *, std::vector<TreeOp *>> collected_tasks;
           redistribute_leaf_tasks(collected_tasks);
           resolve_hazards(collected_tasks);
+          DLOG_IF(INFO, worker_id_ == 0) << "resolved hazards";
           // Modify nodes
           auto &upper_mods = node_mods_[1];
           auto &cur_mods = node_mods_[0];
@@ -1033,6 +1034,6 @@ namespace palmtree {
     }
   }; // End of PalmTree
   // Explicit template initialization
-  template class PalmTree<int, int>;
+  // template class PalmTree<int, int>;
 } // End of namespace palmtree
 

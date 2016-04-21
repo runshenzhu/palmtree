@@ -13,19 +13,19 @@ int main(int argc, char *argv[]) {
   google::InitGoogleLogging(argv[0]);
   DLOG(INFO) << "hello world";
 
-  palmtree::PalmTree<string, int> palmtree(string(""));
-  palmtree::PalmTree<string, int> *palmtreep = &palmtree;
+  palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min());
+  palmtree::PalmTree<int, int> *palmtreep = &palmtree;
 
   std::vector<std::thread> threads;
   for (int i = 0; i < 256; i++) {
     threads.push_back(std::thread([palmtreep, i]() {
       int res;
-      palmtreep->insert("hello", i);
-      bool success = palmtreep->find("hello", res);
+      palmtreep->insert(i, i);
+      bool success = palmtreep->find(i, res);
       if (success) {
         DLOG(INFO) << "Thread " << i << " get " << res;
       } else {
-      assert(false);
+        assert(false);
       }
     }));
   }
