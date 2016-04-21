@@ -59,11 +59,15 @@ namespace palmtree {
       int slot_used;
       KeyType lower_bound;
       Node *parent;
+      Node *prev;
+      Node *next;
 
-      Node(): slot_used(0), parent(nullptr){};
+      Node(): slot_used(0), parent(nullptr), prev(nullptr), next(nullptr){};
       Node(Node *p): slot_used(0), parent(p){};
       virtual ~Node() {};
       virtual NodeType type() const = 0;
+      bool is_single() { return prev == nullptr && next == nullptr ;}
+
     };
 
     struct InnerNode : public Node {
@@ -88,13 +92,9 @@ namespace palmtree {
     };
 
     struct LeafNode : public Node {
-      LeafNode(): prev(nullptr), next(nullptr) {};
+      LeafNode() {};
       virtual ~LeafNode() {};
 
-
-      // Leaf layer doubly linked list
-      LeafNode *prev;
-      LeafNode *next;
 
       // Keys and values for leaf node
       KeyType keys[LEAF_MAX_SLOT];
@@ -272,6 +272,7 @@ namespace palmtree {
         itr++;
       }
 
+      // set prev, next pointer
       new_node->next = node->next;
       node->next->prev = new_node;
       node->next = new_node;
@@ -305,6 +306,13 @@ namespace palmtree {
         add_item_inner(new_node, (*itr).first, (*itr).second);
         itr++;
       }
+
+      // set prev, next pointer
+      new_node->next = node->next;
+      node->next->prev = new_node;
+      node->next = new_node;
+      new_node->prev = node;
+
       new_nodes.push_back(std::make_pair(new_key, new_node));
     }
 
@@ -335,7 +343,10 @@ namespace palmtree {
         DLOG(WARNING) << "del in inner, del idx: " << idx << " key != del_key" << endl;
       }
 
-
+      // the key to be deleted
+      // if this key is min_key
+      // reset other key to min_key latter
+      auto del_key = node->keys[idx];
       // free
       free_recursive(node->children[idx]);
 
@@ -351,6 +362,11 @@ namespace palmtree {
       node->children[idx] = node->children[lastIdx];
 
       node->slot_used--;
+
+      if(key_eq(del_key, min_key_)) {
+        // todo: assert this node is left most one
+        ensure_min_range(node);
+      }
       return;
     }
 
@@ -491,10 +507,17 @@ namespace palmtree {
       // fixme: never merge the first leafnode
       // because the min_key is in this node
       // we can't delete min_key
-      if (node->is_few() && node->prev != nullptr) {
+      if (node->is_few() && !node->is_single()) {
         collect_leaf(node, ret.orphaned_kv);
         ret.node_items.push_back(std::make_pair(node_key, node));
         ret.type_ = MOD_TYPE_DEC;
+
+        if (node->prev != nullptr) {
+          node->prev->next = node->next;
+        }
+        if (node->next != nullptr) {
+          node->next->prev = node->prev;
+        }
       }
 
       return ret;
@@ -575,18 +598,34 @@ namespace palmtree {
       }
 
       // merge
-      // FIXME: don't delete min_key
-      if (node->is_few()) {
+      if (node->is_few() && !node->is_single()) {
         collect_leaf(node, ret.orphaned_kv);
         ret.node_items.push_back(std::make_pair(node_key, node));
         ret.type_ = MOD_TYPE_DEC;
+
+        if (node->prev != nullptr) {
+          node->prev->next = node->next;
+        }
+        if (node->next != nullptr) {
+          node->next->prev = node->prev;
+        }
       }
 
       return ret;
     }
 
+    // set the smallest key in node to min_key
     void ensure_min_range(InnerNode *node UNUSED) {
+      assert(node->slot_used > 0);
+      int idx = 0;
+      for(int i = 1; i < node->slot_used; i++) {
+        if(key_less(node->keys[i], node->keys[idx])) {
+          idx = i;
+        }
+      }
 
+      assert(!key_eq(min_key_, node->keys[idx]));
+      node->keys[idx] = min_key_;
     }
 
     /**************************
