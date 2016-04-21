@@ -336,6 +336,10 @@ namespace palmtree {
         DLOG(WARNING) << "del in inner, del idx: " << idx << " key != del_key" << endl;
       }
 
+
+      // free
+      free_recursive(node->children[idx]);
+
       // if it's the last element
       // just pop it
       if (idx == lastIdx) {
@@ -522,7 +526,7 @@ namespace palmtree {
         }
       }
 
-      if (num >= LEAF_MAX_SLOT) {
+      if (num >= INNER_MAX_SLOT) {
         auto comp = [this](const std::pair<KeyType, Node *> &p1, const std::pair<KeyType, Node *> &p2) {
           return key_less(p1.first, p2.first);
         };
