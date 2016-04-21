@@ -60,14 +60,14 @@ int main(int argc, char *argv[]) {
     reference.erase(key2);
   }
 
-  for (int i = 0; i < 256; i++) {
+  for (auto itr = reference.begin(); itr != reference.end(); itr++) {
+    DLOG(INFO) << itr->first << " " << itr->second;
+  }
+
+  for (int i = 246; i < 256; i++) {
     int res;
     bool suc = palmtreep->find(i, res);
-    if (reference.find(i) != reference.end()) {
-      CHECK(suc == false) << "Should not find anything";
-    } else {
-      CHECK(suc == true && res == reference[i]) << "Should find " << i << " " << reference[i];
-    }
+    CHECK(suc == true && res == reference[i]) << "Should find " << i << " " << reference[i];
   }
 
   for (auto &thread : threads)
