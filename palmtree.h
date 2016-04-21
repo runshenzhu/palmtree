@@ -158,7 +158,7 @@ namespace palmtree {
     struct NodeMod {
       NodeMod(ModType type): type_(type) {}
       NodeMod(const TreeOp &op) {
-        CHECK(op.op_type_ == TREE_OP_FIND) << "NodeMod can convert from a find operation" << endl;
+        CHECK(op.op_type_ == TREE_OP_FIND) << "NodeMod can't convert from a find operation" << endl;
         if (op.op_type_ == TREE_OP_REMOVE) {
           this->type_ = MOD_TYPE_DEC;
         } else {
@@ -170,9 +170,8 @@ namespace palmtree {
       std::vector<std::pair<KeyType, ValueType>> value_items;
       // For inner node modification
       std::vector<std::pair<KeyType, Node *>> node_items;
-      // For removed inner nodes
+      // For removed keys
       std::vector<std::pair<KeyType, ValueType>> orphaned_kv;
-      std::vector<std::pair<KeyType, Node *>> orphaned_node;
 
     };
 
@@ -182,6 +181,8 @@ namespace palmtree {
   private:
     // Root of the palm tree
     Node *tree_root;
+    // Height of the tree
+    int tree_depth_;
     // Key comparator
     KeyComparator kcmp;
     // Return true if k1 < k2
@@ -321,22 +322,17 @@ namespace palmtree {
         CHECK(node->type() == INNERNODE) << "unKnown node" << endl;
         return modify_node_inner((InnerNode *)node, mods);
       }
-
     }
-
 
     NodeMod modify_node_leaf(LeafNode *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
       NodeMod ret(MOD_TYPE_NONE);
       auto& kv = ret.orphaned_kv;
-      auto& kn = ret.orphaned_node;
-
 
       // firstly, we loop all items to save orphaned and count nodes
       int num = node->slot_used;
       for (auto& item : mods) {
         // save all orphaned_*
         kv.insert(kv.end(), item.orphaned_kv.begin(), item.orphaned_kv.end());
-        kn.insert(kn.end(), item.orphaned_node.begin(), item.orphaned_node.end());
 
         auto item_size = (int)item.value_items.size();
         if (item.type_ == MOD_TYPE_ADD) {
@@ -378,7 +374,6 @@ namespace palmtree {
     NodeMod modify_node_inner(InnerNode *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
       NodeMod ret(MOD_TYPE_NONE);
       auto& kv = ret.orphaned_kv;
-      auto& kn = ret.orphaned_node;
 
 
       // firstly, we loop all items to save orphaned and count nodes
@@ -386,7 +381,6 @@ namespace palmtree {
       for (auto& item : mods) {
         // save all orphaned_*
         kv.insert(kv.end(), item.orphaned_kv.begin(), item.orphaned_kv.end());
-        kn.insert(kn.end(), item.orphaned_node.begin(), item.orphaned_node.end());
 
         auto item_size = (int)item.node_items.size();
         if (item.type_ == MOD_TYPE_ADD) {
@@ -424,9 +418,6 @@ namespace palmtree {
       return ret;
     }
 
-
-
-
     /**************************
      * Concurrent executions **
      *
@@ -455,12 +446,10 @@ namespace palmtree {
       int worker_id_;
       // The work for the worker at each stage
       std::vector<TreeOp *> current_tasks_;
-      // Node modifications on the current layer, mapping from node pointer to the
-      // modification list of that node.
-      std::unordered_map<Node *, std::vector<NodeMod>> cur_node_mods_;
-      // Node modifications on the upper layer. This is typically generate by
-      // modify_node()
-      std::unordered_map<Node *, std::vector<NodeMod>> upper_node_mods_;
+      // Node modifications on each layer, the size of the vector will be the
+      // same as the tree height
+      typedef std::unordered_map<Node *, std::vector<NodeMod>> NodeModsMapType;
+      std::vector<NodeModsMapType> node_mods_;
       // Spawn a thread and run the worker loop
       boost::thread wthread_;
       // The palm tree the worker belong to
@@ -504,14 +493,14 @@ namespace palmtree {
       }
 
       // Redistribute the tasks on leaf node, filter any read only task
-      void redistribute_leaf_tasks(std::unordered_map<Node *, std::vector<NodeMod>> &my_tasks) {
+      void redistribute_leaf_tasks(NodeModsMapType &cur_mods) {
         // First add current tasks
         for (auto op : current_tasks_) {
           if (op->op_type_ != TREE_OP_FIND) {
-            if (my_tasks.find(op->target_node_) == my_tasks.end()) {
-              my_tasks.emplace(op->target_node_, std::vector<NodeMod>());
+            if (cur_mods.find(op->target_node_) == cur_mods.end()) {
+              cur_mods.emplace(op->target_node_, std::vector<NodeMod>());
             }
-            my_tasks[op->target_node_].push_back(NodeMod(*op));
+            cur_mods[op->target_node_].push_back(NodeMod(*op));
           }
         }
 
@@ -519,7 +508,7 @@ namespace palmtree {
         for (int i = 0; i < worker_id_; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
           for (auto op : wthread.current_tasks_) {
-            my_tasks.erase(op->target_node_);
+            cur_mods.erase(op->target_node_);
           }
         }
 
@@ -527,33 +516,40 @@ namespace palmtree {
         for (int i = worker_id_+1; i < NUM_WORKER; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
           for (auto op : wthread.current_tasks_) {
-            if (my_tasks.find(op->target_node_) != my_tasks.end() && op->op_type_ != TREE_OP_FIND) {
-              my_tasks[op->target_node_].push_back(NodeMod(*op));
+            if (cur_mods.find(op->target_node_) != cur_mods.end() && op->op_type_ != TREE_OP_FIND) {
+              cur_mods[op->target_node_].push_back(NodeMod(*op));
             }
           }
         }
 
-        DLOG(INFO) << "Worker " << worker_id_ << " has " << my_tasks.size() << " after task redistribution";
+        DLOG(INFO) << "Worker " << worker_id_ << " has " << cur_mods.size() << " after task redistribution";
       }
 
-      // Redistribute the tasks on inner node
-      void redistribute_inner_tasks() {
-        cur_node_mods_ = upper_node_mods_;
+      /**
+       * @brief redistribute inner node tasks for the current thread. It will
+       * read @depth layer's information about node modifications and determine
+       * tasks that belongs to the current thread.
+       *
+       * @param layer which layer's modifications are we trying to colelct
+       * @param cur_mods the collected tasks will be stored in @cur_mods
+       */
+      void redistribute_inner_tasks(int layer, NodeModsMapType &cur_mods) {
+        cur_mods = node_mods_[layer];
 
         // discard
         for (int i = 0; i < worker_id_; i++) {
           auto &wthread = palmtree_->workers_[i];
-          for (auto other_itr = wthread.upper_node_mods_.begin(); other_itr != wthread.upper_node_mods_.end(); other_itr++) {
-            cur_node_mods_.erase(other_itr->first);
+          for (auto other_itr = wthread.node_mods_[layer].begin(); other_itr != wthread.node_mods_[layer].end(); other_itr++) {
+            cur_mods.erase(other_itr->first);
           }
         }
 
         // Steal work from other threads
         for (int i = worker_id_+1; i < NUM_WORKER; i++) {
           auto &wthread = palmtree_->workers_[i];
-          for (auto other_itr = wthread.upper_node_mods_.begin(); other_itr != wthread.upper_node_mods_.end(); other_itr++) {
-            auto itr = cur_node_mods_.find(other_itr->first);
-            if (itr != cur_node_mods_.end()) {
+          for (auto other_itr = wthread.node_mods_[layer].begin(); other_itr != wthread.node_mods_[layer].end(); other_itr++) {
+            auto itr = cur_mods.find(other_itr->first);
+            if (itr != cur_mods.end()) {
               auto &my_mods = itr->second;
               auto &other_mods = other_itr->second;
               my_mods.insert(my_mods.end(), other_mods.begin(), other_mods.end());
@@ -593,32 +589,49 @@ namespace palmtree {
           // have been handled by workers whose worker_id is less than me.
           // Currently we use a unordered_map to record the ownership of tasks upon
           // certain nodes.
-          std::unordered_map<Node *, std::vector<NodeMod>> my_tasks;
-          redistribute_leaf_tasks(my_tasks);
+          redistribute_leaf_tasks(node_mods_[0]);
           // Modify nodes
-          for (auto itr = my_tasks.begin() ; itr != my_tasks.end(); itr++) {
+          auto &upper_mods = node_mods_[1];
+          auto &cur_mods = node_mods_[0];
+          upper_mods.clear();
+          for (auto itr = cur_mods.begin() ; itr != cur_mods.end(); itr++) {
             auto node = itr->first;
             auto &mods = itr->second;
-            CHECK(node != nullptr) << "Modifying a null node" << endl;
+            CHECK(node != nullptr) << "Modifying a null node";
             auto upper_mod = palmtree_->modify_node(node, mods);
-            // FIXME: now we have orphaned_nodes
+            // FIXME: now we have orphaned_keys
             if (upper_mod.type_ == MOD_TYPE_NONE && upper_mod.orphaned_kv.empty()) {
               DLOG(INFO) << "No node modification happened, don't propagate upwards";
               continue;
             }
             DLOG(INFO) << "Add node modification " << upper_mod.type_ << " to upper layer";
-            auto res = upper_node_mods_.find(node->parent);
-            if (res == upper_node_mods_.end()) {
-              upper_node_mods_.emplace(node->parent, std::vector<NodeMod>());
-              upper_node_mods_[node->parent].push_back(upper_mod);
-            } else {
-              res->second.push_back(upper_mod);
+            if (upper_mods.find(node->parent) == upper_mods.end()) {
+              upper_mods.emplace(node->parent, std::vector<NodeMod>());
             }
+            upper_mods[node->parent].push_back(upper_mod);
           }
           palmtree_->sync();
           DLOG_IF(INFO, worker_id_ == 0) << "Stage 2 finished";
           // Stage 3, propagate tree modifications back
-          redistribute_inner_tasks();
+          // Propagate modifications until root
+          for (int layer = 1; layer <= palmtree_->tree_depth_-1; layer++) {
+            NodeModsMapType cur_mods;
+            redistribute_inner_tasks(layer, cur_mods);
+            auto &upper_mods = node_mods_[layer+1];
+            upper_mods.clear();
+            for (auto itr = cur_mods.begin(); itr != cur_mods.end(); itr++) {
+              auto node = itr->first;
+              auto &mods = itr->second;
+              auto mod_res = palmtree_->modify_node(node, mods);
+              if (upper_mods.count(node->parent) == 0) {
+                upper_mods.emplace(node->parent, std::vector<NodeMod>());
+              }
+              upper_mods[node->parent].push_back(mod_res);
+            }
+            palmtree_->sync();
+            DLOG_IF(INFO, worker_id_ == 0) << "Layer #" << layer << " done";
+          }
+          DLOG_IF(INFO, worker_id_ == 0) << "Stage 3 finished";
           // Stage 4, modify the root, re-insert orphaned, mark work as done
           if (worker_id_ == 0) {
             handle_root();
@@ -637,12 +650,12 @@ namespace palmtree {
      * PalmTree public    *
      * ********************/
   public:
-    PalmTree(): barrier_{NUM_WORKER}, task_queue_{10240} {
-      // Init the root node
+    PalmTree(): tree_depth_(0), barrier_{NUM_WORKER}, task_queue_{10240} {
       init();
     }
 
     void init() {
+      // Init the root node
       tree_root = new InnerNode();
       // Init the worker thread
       for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
