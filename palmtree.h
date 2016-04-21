@@ -47,13 +47,14 @@ namespace palmtree {
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 8;
+    static const int NUM_WORKER = 1;
     static const int BATCH_SIZE = 256;
 
   private:
     /**
      * Tree node base class
      */
+    struct InnerNode;
     struct Node {
       // Number of actually used slots
       int slot_used;
@@ -71,7 +72,8 @@ namespace palmtree {
     };
 
     struct InnerNode : public Node {
-      InnerNode(){};
+      InnerNode() = delete;
+      InnerNode(Node *parent): Node(parent){};
       virtual ~InnerNode() {};
       // Keys for children
       KeyType keys[INNER_MAX_SLOT];
@@ -92,9 +94,9 @@ namespace palmtree {
     };
 
     struct LeafNode : public Node {
-      LeafNode() {};
+      LeafNode() = delete;
+      LeafNode(Node *parent): Node(parent){};
       virtual ~LeafNode() {};
-
 
       // Keys and values for leaf node
       KeyType keys[LEAF_MAX_SLOT];
@@ -227,7 +229,7 @@ namespace palmtree {
 
       auto ptr = (InnerNode *)tree_root;
       for (;;) {
-        assert(ptr->slot_used > 0);
+        CHECK(ptr->slot_used > 0) << "Search empty inner node";
         auto idx = this->search_helper(ptr->keys, ptr->slot_used, key);
         CHECK(idx != -1) << "search innerNode fail" << endl;
         Node *child = ptr->children[idx];
@@ -263,7 +265,7 @@ namespace palmtree {
         itr++;
       }
 
-      LeafNode* new_node = new LeafNode();
+      LeafNode* new_node = new LeafNode(node->parent);
 
       // save the second-half in new node
       auto new_key = (*itr).first;
@@ -298,7 +300,7 @@ namespace palmtree {
         itr++;
       }
 
-      InnerNode* new_node = new InnerNode();
+      InnerNode* new_node = new InnerNode(node->parent);
 
       // save the second-half in new node
       auto new_key = (*itr).first;
@@ -651,7 +653,9 @@ namespace palmtree {
       WorkerThread(int worker_id, PalmTree *palmtree):
         worker_id_(worker_id),
         palmtree_(palmtree),
-        done_(false){}
+        done_(false) {
+          node_mods_.push_back(NodeModsMapType());
+        }
       // Worker id, the thread with worker id 0 will need to be the coordinator
       int worker_id_;
       // The work for the worker at each stage
@@ -836,13 +840,16 @@ namespace palmtree {
           DLOG(INFO) << "Root won't split";
         } else if (new_mod.type_ == MOD_TYPE_ADD) {
           DLOG(INFO) << "Split root";
-          InnerNode *new_root = new InnerNode();
+          InnerNode *new_root = new InnerNode(nullptr);
           palmtree_->add_item_inner(new_root, palmtree_->min_key_, palmtree_->tree_root);
           for (auto itr = new_mod.node_items.begin(); itr != new_mod.node_items.end(); itr++) {
             palmtree_->add_item_inner(new_root, itr->first, itr->second);
           }
           palmtree_->tree_root = new_root;
           palmtree_->tree_depth_ += 1;
+          for (auto &wthread : palmtree_->workers_) {
+             wthread.node_mods_.push_back(NodeModsMapType());
+          }
         }
         // Merge root if neccessary
         if (palmtree_->tree_depth_ >= 2 && palmtree_->tree_root->slot_used == 1) {
@@ -851,6 +858,9 @@ namespace palmtree {
           palmtree_->tree_root = old_root->children[0];
           delete old_root;
           palmtree_->ensure_min_range(static_cast<InnerNode *>(palmtree_->tree_root));
+          for (auto &wthread : palmtree_->workers_) {
+             wthread.node_mods_.pop_back();
+          }
         }
         // Naively insert orphaned
         for (auto itr = new_mod.orphaned_kv.begin(); itr != new_mod.orphaned_kv.end(); itr++) {
@@ -863,20 +873,21 @@ namespace palmtree {
       void worker_loop() {
         while (!done_) {
           // Stage 0, collect work batch and partition
-          DLOG_IF(INFO, worker_id_ == 0) << "Stage 0";
+          DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 0: collect tasks";
           if (worker_id_ == 0) {
             collect_batch();
           }
           palmtree_->sync();
-          DLOG_IF(INFO, worker_id_ == 0) << "Stage 0 finished";
+          DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 0 finished";
           // Stage 1, Search for leafs
           DLOG(INFO) << "Worker " << worker_id_ << " got " << current_tasks_.size() << " tasks";
-          DLOG_IF(INFO, worker_id_ == 0) << "Stage 1: search for leaves";
+          DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 1: search for leaves";
           for (auto op : current_tasks_) {
             op->target_node_ = palmtree_->search(op->key_);
           }
           palmtree_->sync();
-          DLOG_IF(INFO, worker_id_ == 0) << "Stage 1 finished";
+          DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 1 finished";
+          DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 2: Process leaves";
           // Stage 2, redistribute work, read the tree then modify, each thread
           // will handle the nodes it has searched for, except the nodes that
           // have been handled by workers whose worker_id is less than me.
@@ -906,7 +917,8 @@ namespace palmtree {
             upper_mods[node->parent].push_back(upper_mod);
           }
           palmtree_->sync();
-          DLOG_IF(INFO, worker_id_ == 0) << "Stage 2 finished";
+          DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 2 finished";
+          DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 3: propagate tree modification";
           // Stage 3, propagate tree modifications back
           // Propagate modifications until root
           for (int layer = 1; layer <= palmtree_->tree_depth_-1; layer++) {
@@ -926,7 +938,8 @@ namespace palmtree {
             palmtree_->sync();
             DLOG_IF(INFO, worker_id_ == 0) << "Layer #" << layer << " done";
           } // End propagate
-          DLOG_IF(INFO, worker_id_ == 0) << "Stage 3 finished";
+          DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 3 finished";
+          DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4: Handle root";
           // Stage 4, modify the root, re-insert orphaned, mark work as done
           if (worker_id_ == 0) {
             // Mark tasks as done
@@ -937,7 +950,7 @@ namespace palmtree {
              }
             }
           }
-          DLOG_IF(INFO, worker_id_ == 0) << "Stage 4 finished";
+          DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4 finished";
         } // End worker loop
       }
     }; // End WorkerThread
@@ -954,7 +967,8 @@ namespace palmtree {
 
     void init() {
       // Init the root node
-      tree_root = new InnerNode();
+      tree_root = new InnerNode(nullptr);
+      add_item_inner((InnerNode *)tree_root, min_key_, new LeafNode(tree_root));
       // Init the worker thread
       for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
         workers_.emplace_back(worker_id, this);
