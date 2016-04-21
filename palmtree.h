@@ -659,14 +659,14 @@ namespace palmtree {
       }
 
       // Redistribute the tasks on leaf node, filter any read only task
-      void redistribute_leaf_tasks(NodeModsMapType &cur_mods) {
+      void redistribute_leaf_tasks(std::unordered_map<Node *, std::vector<TreeOp *>> &result) {
         // First add current tasks
         for (auto op : current_tasks_) {
           if (op->op_type_ != TREE_OP_FIND) {
-            if (cur_mods.find(op->target_node_) == cur_mods.end()) {
-              cur_mods.emplace(op->target_node_, std::vector<NodeMod>());
+            if (result.find(op->target_node_) == result.end()) {
+              result.emplace(op->target_node_, std::vector<TreeOp *>());
             }
-            cur_mods[op->target_node_].push_back(NodeMod(*op));
+            result[op->target_node_].push_back(op);
           }
         }
 
@@ -674,7 +674,7 @@ namespace palmtree {
         for (int i = 0; i < worker_id_; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
           for (auto op : wthread.current_tasks_) {
-            cur_mods.erase(op->target_node_);
+            result.erase(op->target_node_);
           }
         }
 
@@ -682,13 +682,13 @@ namespace palmtree {
         for (int i = worker_id_+1; i < NUM_WORKER; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
           for (auto op : wthread.current_tasks_) {
-            if (cur_mods.find(op->target_node_) != cur_mods.end() && op->op_type_ != TREE_OP_FIND) {
-              cur_mods[op->target_node_].push_back(NodeMod(*op));
+            if (result.find(op->target_node_) != result.end()) {
+              result[op->target_node_].push_back(op);
             }
           }
         }
 
-        DLOG(INFO) << "Worker " << worker_id_ << " has " << cur_mods.size() << " after task redistribution";
+        DLOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " after task redistribution";
       }
 
       /**
@@ -724,8 +724,19 @@ namespace palmtree {
         }
       }
 
+      /**
+       * @brief carry out all operations on the tree in a serializable order,
+       *  reduce operations on the same key. The result of this function is to
+       *  provide proper return result for all the operations, as well as filter
+       *  out the todo node modifications on the #0 layer
+       *  */
+      void resolve_hazards(const std::unordered_map<Node *, std::vector<TreeOp *>> &tree_ops UNUSED) {
+
+      }
+
       // Handle root modifications
       void handle_root() {
+
       }
 
       // Worker loop: process tasks
@@ -755,7 +766,9 @@ namespace palmtree {
           // have been handled by workers whose worker_id is less than me.
           // Currently we use a unordered_map to record the ownership of tasks upon
           // certain nodes.
-          redistribute_leaf_tasks(node_mods_[0]);
+          std::unordered_map<Node *, std::vector<TreeOp *>> collected_tasks;
+          redistribute_leaf_tasks(collected_tasks);
+          resolve_hazards(collected_tasks);
           // Modify nodes
           auto &upper_mods = node_mods_[1];
           auto &cur_mods = node_mods_[0];
@@ -796,20 +809,22 @@ namespace palmtree {
             }
             palmtree_->sync();
             DLOG_IF(INFO, worker_id_ == 0) << "Layer #" << layer << " done";
-          }
+          } // End propagate
           DLOG_IF(INFO, worker_id_ == 0) << "Stage 3 finished";
           // Stage 4, modify the root, re-insert orphaned, mark work as done
           if (worker_id_ == 0) {
+            // Mark tasks as done
             handle_root();
+            for (auto &wthread : palmtree_->workers_) {
+             for (auto op : wthread.current_tasks_) {
+               op->done_ = true;
+             }
+            }
           }
-
-          // Mark tasks as done
-          for (auto op : current_tasks_) {
-            op->done_ = true;
-          }
-        }
+        } // End worker loop
       }
-    };
+    }; // End WorkerThread
+
 
     std::vector<WorkerThread> workers_;
     /**********************
