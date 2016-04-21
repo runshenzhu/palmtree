@@ -12,6 +12,7 @@
 #include <boost/thread.hpp>
 #include <iostream>
 #include <memory>
+#include <atomic>
 #include <glog/logging.h>
 
 using std::cout;
@@ -20,7 +21,7 @@ using std::endl;
 #define UNUSED __attribute__((unused))
 
 namespace palmtree {
-
+  static std::atomic<int> NODE_NUM(0);
   /**
    * Tree operation types
    */
@@ -45,7 +46,7 @@ namespace palmtree {
     // Max number of slots per leaf node
     static const int LEAF_MAX_SLOT = 1024;
 
-    static const int MAX_SLOT = 256;
+    static const int MAX_SLOT = 8;
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
@@ -60,14 +61,18 @@ namespace palmtree {
     struct Node {
       // Number of actually used slots
       int slot_used;
+      int id;
       KeyType lower_bound;
       Node *parent;
       Node *prev;
       Node *next;
 
-      Node(): slot_used(0), parent(nullptr), prev(nullptr), next(nullptr){};
-      Node(Node *p): slot_used(0), parent(p){};
+      Node(): slot_used(0), parent(nullptr), prev(nullptr), next(nullptr){
+        id = NODE_NUM++;
+      };
+      Node(Node *p): slot_used(0), parent(p){ id = NODE_NUM++; };
       virtual ~Node() {};
+      virtual std::string to_string() = 0;
       virtual NodeType type() const = 0;
       bool is_single() { return prev == nullptr && next == nullptr ;}
 
@@ -85,6 +90,17 @@ namespace palmtree {
       virtual NodeType type() const {
         return INNERNODE;
       }
+
+      virtual std::string to_string() {
+        std::string res;
+        res += "InnerNode[" + std::to_string(Node::id) + "] ";
+        res += std::to_string(Node::slot_used);
+        for (int i = 0 ; i < Node::slot_used ; i++) {
+          res += " " + std::to_string(keys[i]) + ":" + std::to_string(values[i]->id);
+        }
+        return res;
+      }
+
       inline bool is_full() const {
         return Node::slot_used == MAX_SLOT;
       }
@@ -106,6 +122,16 @@ namespace palmtree {
 
       virtual NodeType type() const {
         return LEAFNODE;
+      }
+
+      virtual std::string to_string() {
+        std::string res;
+        res += "LeafNode[" + std::to_string(Node::id) + "] ";
+        res += std::to_string(Node::slot_used);
+        for (int i = 0 ; i < Node::slot_used ; i++) {
+          res += " " + std::to_string(keys[i]) + ":" + std::to_string(values[i]);
+        }
+        return res;
       }
 
       inline bool is_full() const {
@@ -397,7 +423,7 @@ namespace palmtree {
       }
 
       DLOG(INFO) << "Result node size " << num;
-      if (num >= LEAF_MAX_SLOT) {
+      if (num >= MAX_SLOT) {
         DLOG(INFO) << "Going to split";
         auto comp = [this](const std::pair<KeyType, ValueType> &p1, const std::pair<KeyType, ValueType> &p2) {
           return key_less(p1.first, p2.first);
@@ -493,7 +519,7 @@ namespace palmtree {
         }
       }
 
-      if (num >= INNER_MAX_SLOT) {
+      if (num >= MAX_SLOT) {
         auto comp = [this](const std::pair<KeyType, Node *> &p1, const std::pair<KeyType, Node *> &p2) {
           return key_less(p1.first, p2.first);
         };
@@ -573,6 +599,53 @@ namespace palmtree {
 
       assert(!key_eq(min_key_, node->keys[idx]));
       node->keys[idx] = min_key_;
+    }
+
+    void ensure_tree_structure(Node *node, int indent = 0) {
+      std::string space;
+      for (int i = 0; i < indent; i++)
+        space += " ";
+      DLOG(INFO) << space << node->to_string();
+      if (node->prev != nullptr)
+        CHECK(node->prev->next == node) << "Left brother dosen't point to me";
+      if (node->next != nullptr)
+        CHECK(node->next->prev == node) << "Right brother dosen't point to me";
+      if (node->type() == INNERNODE) {
+        InnerNode *inode = (InnerNode *)node;
+        for (int i = 0; i < inode->slot_used; i++) {
+          auto child = inode->values[i];
+          CHECK(child->parent == node) << "My child " << i << " does not point to me";
+        }
+      }
+
+      if (node->type() == INNERNODE) {
+        InnerNode *inode = (InnerNode *)node;
+        for (int i = 0; i < inode->slot_used; i++) {
+          auto child = inode->values[i];
+          KeyType *key_set;
+          if (child->type() == LEAFNODE)
+            key_set = ((LeafNode *)child)->keys;
+          else
+            key_set = ((InnerNode *)child)->keys;
+          if (child->slot_used == 0) {
+            CHECK(node == tree_root) << "Non root node has empty child " << i;
+          } else {
+            int idx = 0;
+            for (int j = 1; j < child->slot_used; j++) {
+              if (key_less(key_set[j], key_set[idx])) {
+                idx = j;
+              }
+            }
+
+            auto child_min_key = key_set[idx];
+            CHECK(!key_less(child_min_key, inode->keys[i])) << "My child " << i << " is beyond the key range";
+          }
+        }
+
+        for (int i = 0; i < inode->slot_used; i++) {
+          ensure_tree_structure(inode->values[i], indent + 4);
+        }
+      }
     }
 
     /**************************
@@ -900,11 +973,11 @@ namespace palmtree {
              wthread.current_tasks_.clear();
             }
           }
+          palmtree_->ensure_tree_structure(palmtree_->tree_root, 0);
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4 finished";
         } // End worker loop
       }
     }; // End WorkerThread
-
 
     std::vector<WorkerThread> workers_;
     /**********************
