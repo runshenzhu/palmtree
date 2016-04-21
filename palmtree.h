@@ -55,6 +55,7 @@ namespace palmtree {
     struct Node {
       // Number of actually used slots
       int slot_used;
+      KeyType lower_bound;
       Node *parent;
 
       Node(): slot_used(0), parent(nullptr){};
@@ -172,7 +173,6 @@ namespace palmtree {
       std::vector<std::pair<KeyType, Node *>> node_items;
       // For removed keys
       std::vector<std::pair<KeyType, ValueType>> orphaned_kv;
-
     };
 
   /********************
@@ -185,6 +185,7 @@ namespace palmtree {
     int tree_depth_;
     // Key comparator
     KeyComparator kcmp;
+
     // Return true if k1 < k2
     inline bool key_less(const KeyType &k1, const KeyType &k2) {
       return kcmp(k1, k2);
@@ -240,11 +241,72 @@ namespace palmtree {
      *  The splited nodes should be stored in Node, respect to appropriate
      *  node types
      */
-    template<typename V>
-    void big_split(std::vector<std::pair<KeyType, V>> &input UNUSED, std::vector<std::pair<KeyType, Node *>> &output UNUSED) {
-      std::sort(input.begin(), input.end(), [this](const std::pair<KeyType, V> &p1, const std::pair<KeyType, V> &p2) {
+    void big_split_leaf(std::vector<std::pair<KeyType, ValueType>> &input UNUSED, LeafNode *node, std::vector<std::pair<KeyType, Node *>> &new_nodes UNUSED) {
+
+      std::sort(input.begin(), input.end(), [this](const std::pair<KeyType, ValueType> &p1, const std::pair<KeyType, ValueType> &p2) {
         return key_less(p1.first, p2.first);
       });
+
+      int half_size = (int) input.size() / 2;
+      auto itr = input.begin();
+
+      // save first half items (small part) in old node
+      node->slot_used = 0;
+      for(int i = 0; i < half_size; i++) {
+        add_item_leaf((LeafNode *) node, (*itr).first, (*itr).second);
+        itr++;
+      }
+
+
+      LeafNode* new_node = new LeafNode();
+
+
+      // save the second-half in new node
+      auto new_key = (*itr).first;
+      while(itr != input.end()){
+        add_item_leaf((LeafNode *) new_node, (*itr).first, (*itr).second);
+        itr++;
+      }
+
+      new_node->next = node->next;
+      node->next->prev = new_node;
+      node->next = new_node;
+      new_node->prev = node;
+
+      new_nodes.push_back(std::make_pair(new_key, new_node));
+    }
+
+
+    void big_split_inner(std::vector<std::pair<KeyType, Node *>> &input UNUSED, InnerNode *node, std::vector<std::pair<KeyType, Node *>> &new_nodes UNUSED) {
+
+      std::sort(input.begin(), input.end(), [this](const std::pair<KeyType, Node *> &p1, const std::pair<KeyType, Node *> &p2) {
+        return key_less(p1.first, p2.first);
+      });
+
+      int half_size = (int) input.size() / 2;
+      auto itr = input.begin();
+
+      // save first half items (small part) in old node
+      node->slot_used = 0;
+      for(int i = 0; i < half_size; i++) {
+        add_item_inner(node, (*itr).first, (*itr).second);
+        itr++;
+      }
+
+
+      InnerNode* new_node = new InnerNode();
+
+
+      // save the second-half in new node
+      auto new_key = (*itr).first;
+      while(itr != input.end()){
+        add_item_inner(new_node, (*itr).first, (*itr).second);
+        itr++;
+      }
+
+
+
+      new_nodes.push_back(std::make_pair(new_key, new_node));
     }
 
     void add_item_inner(InnerNode *node UNUSED, const KeyType &key UNUSED, Node *child UNUSED) {
@@ -265,9 +327,13 @@ namespace palmtree {
       auto lastIdx = node->slot_used - 1;
       auto idx = search_helper(node->keys, node->slot_used, key);
       DLOG(INFO) << "search in del, idx: " << idx;
-      if (idx == -1 || !key_eq(node->keys[idx], key)) {
+      if (idx == -1) {
         DLOG(WARNING) << "del fail, can't find key in node";
         return;
+      }
+
+      if(!key_eq(key, node->keys[idx])) {
+        DLOG(WARNING) << "del in inner, del idx: " << idx << " key != del_key" << endl;
       }
 
       // if it's the last element
@@ -309,6 +375,27 @@ namespace palmtree {
       return;
     }
 
+
+    // collect kv pairs in (or under) this node
+    // used for merge
+    void collect_leaf(Node *node, std::vector<std::pair<KeyType, ValueType>> &container) {
+      if(node->type() == LEAFNODE) {
+        auto ptr = (LeafNode *)node;
+        for(int i = 0; i < node->slot_used; i++) {
+          container.push_back(std::make_pair(ptr->keys[i], ptr->values[i]));
+        }
+      }else if(node->type() == INNERNODE) {
+        auto ptr = (InnerNode *)node;
+        for(int i = 0; i < node->slot_used; i++) {
+          collect_leaf(ptr->children[i], container);
+        }
+      }else{
+        assert(0);
+      }
+
+      return;
+    }
+
     /**
      * @brief Modify @node by applying node modifications in @modes. If @node
      * is a leaf node, @mods will be a list of add kv and del kv. If @node is
@@ -328,6 +415,9 @@ namespace palmtree {
       NodeMod ret(MOD_TYPE_NONE);
       auto& kv = ret.orphaned_kv;
 
+      // randomly pick up a key, used for merge
+      auto node_key = node->keys[0];
+
       // firstly, we loop all items to save orphaned and count nodes
       int num = node->slot_used;
       for (auto& item : mods) {
@@ -345,10 +435,43 @@ namespace palmtree {
       }
 
       if (num >= LEAF_MAX_SLOT) {
-        //TODO: split
-        LOG(INFO) << "leafnode will be split"<< endl;
-        assert(0);
-      }else {
+        auto comp = [this](const std::pair<KeyType, ValueType> &p1, const std::pair<KeyType, ValueType> &p2) {
+          return key_less(p1.first, p2.first);
+        };
+
+        std::set<std::pair<KeyType, ValueType>, decltype(comp)> buf(comp);
+
+        // execute add/del
+        for (auto& item : mods) {
+          if (item.type_ == MOD_TYPE_ADD) {
+            for (auto& kv : item.value_items) {
+              buf.insert(kv);
+            }
+          } else if(item.type_ == MOD_TYPE_DEC) {
+            for (auto& kv : item.value_items) {
+              if(buf.count(kv)) {
+                buf.erase(kv);
+              }else{
+                del_item_leaf(node, kv.first);
+              }
+            }
+          }
+        }
+
+        // construct input for split
+        auto split_input = std::vector<std::pair<KeyType, ValueType>>(buf.size() + node->slot_used);
+        for(auto itr = buf.begin(); itr != buf.end(); itr++) {
+          split_input.push_back(*itr);
+        }
+
+        for(auto i = 0; i < node->slot_used; i++) {
+          split_input.push_back(std::make_pair(node->keys[i], node->values[i]));
+        }
+        // do split based on this buf
+        big_split_leaf(split_input, node, ret.node_items);
+        ret.type_ = MOD_TYPE_ADD;
+        return ret;
+      } else {
         for (auto& item : mods) {
           if (item.type_ == MOD_TYPE_ADD) {
             for (auto& kv : item.value_items) {
@@ -362,9 +485,14 @@ namespace palmtree {
         }
       }
 
-      // what's the signal of merge??
-      // TODO: merge
-      if (node->slot_used == 0) {
+      // merge
+      // fixme: never merge the first leafnode
+      // because the min_key is in this node
+      // we can't delete min_key
+      if (node->is_few() && node->prev != nullptr) {
+        collect_leaf(node, ret.orphaned_kv);
+        ret.node_items.push_back(std::make_pair(node_key, node));
+        ret.type_ = MOD_TYPE_DEC;
       }
 
       return ret;
@@ -375,6 +503,8 @@ namespace palmtree {
       NodeMod ret(MOD_TYPE_NONE);
       auto& kv = ret.orphaned_kv;
 
+      // randomly pick up a key, used for merge
+      auto node_key = node->keys[0];
 
       // firstly, we loop all items to save orphaned and count nodes
       int num = node->slot_used;
@@ -392,27 +522,63 @@ namespace palmtree {
         }
       }
 
-      if (num >= INNER_MAX_SLOT) {
-        //TODO: split
-        LOG(INFO) << "Innernode will be split" << endl;
-        assert(0);
-      }else {
+      if (num >= LEAF_MAX_SLOT) {
+        auto comp = [this](const std::pair<KeyType, Node *> &p1, const std::pair<KeyType, Node *> &p2) {
+          return key_less(p1.first, p2.first);
+        };
+
+        std::set<std::pair<KeyType, Node *>, decltype(comp)> buf(comp);
+
+        // execute add/del
+        for (auto& item : mods) {
+          if (item.type_ == MOD_TYPE_ADD) {
+            for (auto& kv : item.node_items) {
+              buf.insert(kv);
+            }
+          } else if(item.type_ == MOD_TYPE_DEC) {
+            for (auto& kv : item.node_items) {
+              if(buf.count(kv)) {
+                buf.erase(kv);
+              }else{
+                del_item_inner(node, kv.first);
+              }
+            }
+          }
+        }
+
+        // construct input for split
+        auto split_input = std::vector<std::pair<KeyType, Node *>>(buf.size() + node->slot_used);
+        for(auto itr = buf.begin(); itr != buf.end(); itr++) {
+          split_input.push_back(*itr);
+        }
+
+        for(auto i = 0; i < node->slot_used; i++) {
+          split_input.push_back(std::make_pair(node->keys[i], node->children[i]));
+        }
+        // do split based on this buf
+        big_split_inner(split_input, node, ret.node_items);
+        ret.type_ = MOD_TYPE_ADD;
+        return ret;
+      } else {
         for (auto& item : mods) {
           if (item.type_ == MOD_TYPE_ADD) {
             for (auto& kv : item.node_items) {
               add_item_inner(node, kv.first, kv.second);
             }
           } else if(item.type_ == MOD_TYPE_DEC) {
-            for (auto& kv : item.value_items) {
+            for (auto& kv : item.node_items) {
               del_item_inner(node, kv.first);
             }
           }
         }
       }
 
-      // what's the signal of merge??
-      // TODO: merge
-      if (node->slot_used == 0) {
+      // merge
+      // fixme: don't delete min_key
+      if (node->is_few()) {
+        collect_leaf(node, ret.orphaned_kv);
+        ret.node_items.push_back(std::make_pair(node_key, node));
+        ret.type_ = MOD_TYPE_DEC;
       }
 
       return ret;
