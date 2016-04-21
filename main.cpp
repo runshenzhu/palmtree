@@ -13,7 +13,7 @@ int main(int argc, char *argv[]) {
   google::InitGoogleLogging(argv[0]);
   DLOG(INFO) << "hello world";
 
-  palmtree::PalmTree<string, string> palmtree;
+  palmtree::PalmTree<string, string> palmtree(string(""));
   palmtree::PalmTree<string, string> *palmtreep = &palmtree;
 
   std::vector<std::thread> threads;

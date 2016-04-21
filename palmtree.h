@@ -183,6 +183,8 @@ namespace palmtree {
     Node *tree_root;
     // Height of the tree
     int tree_depth_;
+    // Minimal key
+    KeyType min_key_;
     // Key comparator
     KeyComparator kcmp;
 
@@ -257,9 +259,7 @@ namespace palmtree {
         itr++;
       }
 
-
       LeafNode* new_node = new LeafNode();
-
 
       // save the second-half in new node
       auto new_key = (*itr).first;
@@ -293,9 +293,7 @@ namespace palmtree {
         itr++;
       }
 
-
       InnerNode* new_node = new InnerNode();
-
 
       // save the second-half in new node
       auto new_key = (*itr).first;
@@ -303,9 +301,6 @@ namespace palmtree {
         add_item_inner(new_node, (*itr).first, (*itr).second);
         itr++;
       }
-
-
-
       new_nodes.push_back(std::make_pair(new_key, new_node));
     }
 
@@ -378,7 +373,6 @@ namespace palmtree {
       node->slot_used--;
       return;
     }
-
 
     // collect kv pairs in (or under) this node
     // used for merge
@@ -502,7 +496,6 @@ namespace palmtree {
       return ret;
     }
 
-
     NodeMod modify_node_inner(InnerNode *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
       NodeMod ret(MOD_TYPE_NONE);
       auto& kv = ret.orphaned_kv;
@@ -578,7 +571,7 @@ namespace palmtree {
       }
 
       // merge
-      // fixme: don't delete min_key
+      // FIXME: don't delete min_key
       if (node->is_few()) {
         collect_leaf(node, ret.orphaned_kv);
         ret.node_items.push_back(std::make_pair(node_key, node));
@@ -738,9 +731,39 @@ namespace palmtree {
 
       }
 
-      // Handle root modifications
+      /**
+       * @brief Handle root split and re-insert orphaned keys. It may need to grow the tree height
+       */
       void handle_root() {
+        int root_depth = palmtree_->tree_depth_;
+        std::vector<NodeMod> root_mods;
+        // Collect root modifications from all threads
+        for (auto &wthread : palmtree_->workers_) {
+          auto itr = wthread.node_mods_[root_depth].begin();
+          if (itr != wthread.node_mods_[root_depth].end()) {
+            root_mods.insert(root_mods.end(), itr->second.begin(), itr->second.end());
+          }
+        }
 
+        // Handle over to modify_node
+        auto new_mod = palmtree_->modify_node(palmtree_->tree_root, root_mods);
+        if (new_mod.type_ == MOD_TYPE_NONE) {
+          DLOG(INFO) << "Root won't split";
+        } else if (new_mod.type_ == MOD_TYPE_ADD) {
+          DLOG(INFO) << "Split root";
+          InnerNode *new_root = new InnerNode();
+          palmtree_->add_item_inner(new_root, palmtree_->min_key_, palmtree_->tree_root);
+          for (auto itr = new_mod.node_items.begin(); itr != new_mod.node_items.end(); itr++) {
+            palmtree_->add_item_inner(new_root, itr->first, itr->second);
+          }
+          palmtree_->tree_root = new_root;
+        }
+
+        // Naively insert orphaned
+        for (auto itr = new_mod.orphaned_kv.begin(); itr != new_mod.orphaned_kv.end(); itr++) {
+          auto leaf = palmtree_->search(itr->first);
+          palmtree_->add_item_leaf(leaf, itr->first, itr->second);
+        }
       }
 
       // Worker loop: process tasks
@@ -825,6 +848,7 @@ namespace palmtree {
              }
             }
           }
+          DLOG_IF(INFO, worker_id_ == 0) << "Stage 4 finished";
         } // End worker loop
       }
     }; // End WorkerThread
@@ -835,7 +859,7 @@ namespace palmtree {
      * PalmTree public    *
      * ********************/
   public:
-    PalmTree(): tree_depth_(0), barrier_{NUM_WORKER}, task_queue_{10240} {
+    PalmTree(KeyType min_key): tree_depth_(0), min_key_(min_key), barrier_{NUM_WORKER}, task_queue_{10240} {
       init();
     }
 
