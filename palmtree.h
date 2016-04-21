@@ -113,10 +113,6 @@ namespace palmtree {
       inline bool is_few() const {
         return Node::slot_used < LEAF_MAX_SLOT/4;
       }
-
-      inline ValueType *get_value(const KeyType &key UNUSED) {
-        return &values[0];
-      }
     };
     /**
      * Tree operation wrappers
@@ -276,7 +272,8 @@ namespace palmtree {
 
       // set prev, next pointer
       new_node->next = node->next;
-      node->next->prev = new_node;
+      if (node->next != nullptr)
+        node->next->prev = new_node;
       node->next = new_node;
       new_node->prev = node;
 
@@ -422,13 +419,15 @@ namespace palmtree {
      * a inner node, @mods will be a list of add range and del range. If new
      * node modifications are triggered, record them in @new_mods.
      */
-    NodeMod modify_node(Node *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
+    NodeMod modify_node(Node *node, const std::vector<NodeMod> &mods) {
+      DLOG(INFO) << "Modify a node ";
       if(node->type() == LEAFNODE) {
         return modify_node_leaf((LeafNode *)node, mods);
       }else{
         CHECK(node->type() == INNERNODE) << "unKnown node" << endl;
         return modify_node_inner((InnerNode *)node, mods);
       }
+      DLOG(INFO) << "Modified";
     }
 
     NodeMod modify_node_leaf(LeafNode *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
@@ -454,7 +453,9 @@ namespace palmtree {
         }
       }
 
+      DLOG(INFO) << "Result node size " << num;
       if (num >= LEAF_MAX_SLOT) {
+        DLOG(INFO) << "Going to split";
         auto comp = [this](const std::pair<KeyType, ValueType> &p1, const std::pair<KeyType, ValueType> &p2) {
           return key_less(p1.first, p2.first);
         };
@@ -492,6 +493,7 @@ namespace palmtree {
         ret.type_ = MOD_TYPE_ADD;
         return ret;
       } else {
+        DLOG(INFO) << "don't split";
         for (auto& item : mods) {
           if (item.type_ == MOD_TYPE_ADD) {
             for (auto& kv : item.value_items) {
@@ -779,6 +781,7 @@ namespace palmtree {
        *  out the todo node modifications on the #0 layer
        *  */
       void resolve_hazards(const std::unordered_map<Node *, std::vector<TreeOp *>> &tree_ops UNUSED) {
+        node_mods_[0].clear();
         auto &leaf_mods = node_mods_[0];
         std::unordered_map<KeyType, ValueType> changed_values;
         std::unordered_set<KeyType> deleted;
@@ -794,16 +797,18 @@ namespace palmtree {
                   op->result_ = changed_values[op->key_];
                   op->boolean_result_ = true;
                 } else {
-                  auto vp = leaf->get_value(op->key_);
-                  if (vp == nullptr) {
+                  int idx = palmtree_->search_helper(leaf->keys, leaf->slot_used, op->key_);
+                  if (idx == -1 || !palmtree_->key_eq(leaf->keys[idx], op->key_)) {
+                    // Not find
                     op->boolean_result_ = false;
                   } else {
-                    op->result_ = *vp;
+                    op->result_ = leaf->values[idx];
                     op->boolean_result_ = true;
                   }
                 }
               }
             } else if (op->op_type_ == TREE_OP_INSERT) {
+              DLOG(INFO) << "Try to insert " << op->key_ << ": " << op->value_;
               deleted.erase(op->key_);
               changed_values[op->key_] = op->value_;
               if (leaf_mods.count(leaf) == 0)
@@ -949,6 +954,7 @@ namespace palmtree {
              for (auto op : wthread.current_tasks_) {
                op->done_ = true;
              }
+             wthread.current_tasks_.clear();
             }
           }
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4 finished";

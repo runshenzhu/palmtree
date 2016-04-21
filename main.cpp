@@ -18,7 +18,7 @@ int main(int argc, char *argv[]) {
 
   std::vector<std::thread> threads;
   for (int i = 0; i < 256; i++) {
-    threads.push_back(std::thread([palmtreep, i]() {
+//    threads.push_back(std::thread([palmtreep, i]() {
       int res;
       palmtreep->insert(i, i);
       bool success = palmtreep->find(i, res);
@@ -27,7 +27,7 @@ int main(int argc, char *argv[]) {
       } else {
         assert(false);
       }
-    }));
+//    }));
   }
 
   for (auto &thread : threads)
