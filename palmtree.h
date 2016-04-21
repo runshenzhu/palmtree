@@ -44,6 +44,8 @@ namespace palmtree {
     static const int INNER_MAX_SLOT = 256;
     // Max number of slots per leaf node
     static const int LEAF_MAX_SLOT = 1024;
+
+    static const int MAX_SLOT = 256;
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
@@ -75,20 +77,20 @@ namespace palmtree {
       InnerNode() = delete;
       InnerNode(Node *parent): Node(parent){};
       virtual ~InnerNode() {};
-      // Keys for children
-      KeyType keys[INNER_MAX_SLOT];
-      // Pointers for children
-      Node *children[INNER_MAX_SLOT];
+      // Keys for values
+      KeyType keys[MAX_SLOT];
+      // Pointers for child nodes
+      Node *values[MAX_SLOT];
 
       virtual NodeType type() const {
         return INNERNODE;
       }
       inline bool is_full() const {
-        return Node::slot_used == INNER_MAX_SLOT;
+        return Node::slot_used == MAX_SLOT;
       }
 
       inline bool is_few() const {
-        return Node::slot_used < INNER_MAX_SLOT/2;
+        return Node::slot_used < MAX_SLOT/2;
       }
 
     };
@@ -99,19 +101,19 @@ namespace palmtree {
       virtual ~LeafNode() {};
 
       // Keys and values for leaf node
-      KeyType keys[LEAF_MAX_SLOT];
-      ValueType values[LEAF_MAX_SLOT+1];
+      KeyType keys[MAX_SLOT];
+      ValueType values[MAX_SLOT];
 
       virtual NodeType type() const {
         return LEAFNODE;
       }
 
       inline bool is_full() const {
-        return Node::slot_used == LEAF_MAX_SLOT;
+        return Node::slot_used == MAX_SLOT;
       }
 
       inline bool is_few() const {
-        return Node::slot_used < LEAF_MAX_SLOT/4;
+        return Node::slot_used < MAX_SLOT/4;
       }
     };
     /**
@@ -228,7 +230,7 @@ namespace palmtree {
         CHECK(ptr->slot_used > 0) << "Search empty inner node";
         auto idx = this->search_helper(ptr->keys, ptr->slot_used, key);
         CHECK(idx != -1) << "search innerNode fail" << endl;
-        Node *child = ptr->children[idx];
+        Node *child = ptr->values[idx];
         if (child->type() == LEAFNODE) {
           return (LeafNode *)child;
         } else {
@@ -245,9 +247,10 @@ namespace palmtree {
      *  The splited nodes should be stored in Node, respect to appropriate
      *  node types
      */
-    void big_split_leaf(std::vector<std::pair<KeyType, ValueType>> &input UNUSED, LeafNode *node, std::vector<std::pair<KeyType, Node *>> &new_nodes UNUSED) {
+    template<typename NodeType, typename V>
+    void big_split(std::vector<std::pair<KeyType, V>> &input, NodeType *node, std::vector<std::pair<KeyType, Node *>> &new_nodes) {
 
-      std::sort(input.begin(), input.end(), [this](const std::pair<KeyType, ValueType> &p1, const std::pair<KeyType, ValueType> &p2) {
+      std::sort(input.begin(), input.end(), [this](const std::pair<KeyType, V> &p1, const std::pair<KeyType, V> &p2) {
         return key_less(p1.first, p2.first);
       });
 
@@ -257,16 +260,16 @@ namespace palmtree {
       // save first half items (small part) in old node
       node->slot_used = 0;
       for(int i = 0; i < half_size; i++) {
-        add_item_leaf((LeafNode *) node, (*itr).first, (*itr).second);
+        add_item<NodeType, V>(node, itr->first, itr->second);
         itr++;
       }
 
-      LeafNode* new_node = new LeafNode(node->parent);
+      NodeType* new_node = new NodeType(node->parent);
 
       // save the second-half in new node
       auto new_key = (*itr).first;
       while(itr != input.end()){
-        add_item_leaf((LeafNode *) new_node, (*itr).first, (*itr).second);
+        add_item<NodeType, V>(new_node, itr->first, itr->second);
         itr++;
       }
 
@@ -280,56 +283,17 @@ namespace palmtree {
       new_nodes.push_back(std::make_pair(new_key, new_node));
     }
 
-
-    void big_split_inner(std::vector<std::pair<KeyType, Node *>> &input UNUSED, InnerNode *node, std::vector<std::pair<KeyType, Node *>> &new_nodes UNUSED) {
-
-      std::sort(input.begin(), input.end(), [this](const std::pair<KeyType, Node *> &p1, const std::pair<KeyType, Node *> &p2) {
-        return key_less(p1.first, p2.first);
-      });
-
-      int half_size = (int) input.size() / 2;
-      auto itr = input.begin();
-
-      // save first half items (small part) in old node
-      node->slot_used = 0;
-      for(int i = 0; i < half_size; i++) {
-        add_item_inner(node, (*itr).first, (*itr).second);
-        itr++;
-      }
-
-      InnerNode* new_node = new InnerNode(node->parent);
-
-      // save the second-half in new node
-      auto new_key = (*itr).first;
-      while(itr != input.end()){
-        add_item_inner(new_node, (*itr).first, (*itr).second);
-        itr++;
-      }
-
-      // set prev, next pointer
-      new_node->next = node->next;
-      node->next->prev = new_node;
-      node->next = new_node;
-      new_node->prev = node;
-
-      new_nodes.push_back(std::make_pair(new_key, new_node));
-    }
-
-    void add_item_inner(InnerNode *node UNUSED, const KeyType &key UNUSED, Node *child UNUSED) {
+    template <typename NodeType, typename V>
+    void add_item(NodeType *node, const KeyType &key, V value) {
       auto idx = node->slot_used++;
       node->keys[idx] = key;
-      node->children[idx] = child;
+      node->values[idx] = value;
       return;
     }
 
-    void add_item_leaf(LeafNode *node UNUSED, const KeyType &key UNUSED, const ValueType &val UNUSED) {
-      auto idx = node->slot_used++;
-      node->keys[idx] = key;
-      node->values[idx] = val;
-      return;
-    }
 
-    void del_item_inner(InnerNode *node UNUSED, const KeyType &key UNUSED) {
+    template <typename NodeType>
+    void del_item(NodeType *node, const KeyType &key) {
       auto lastIdx = node->slot_used - 1;
       auto idx = search_helper(node->keys, node->slot_used, key);
       DLOG(INFO) << "search in del, idx: " << idx;
@@ -338,75 +302,56 @@ namespace palmtree {
         return;
       }
 
-      if(!key_eq(key, node->keys[idx])) {
+      if (!key_eq(key, node->keys[idx])) {
         DLOG(WARNING) << "del in inner, del idx: " << idx << " key != del_key" << endl;
+        if (node->type() == LEAFNODE)
+          return;
       }
 
-      // the key to be deleted
-      // if this key is min_key
-      // reset other key to min_key latter
+      // the key to be deleted. If the key to be deleted is min_key, we need to
+      // replace the smallest key with the min_key, as we need to ensure min_key
+      // is not deleted.
       auto del_key = node->keys[idx];
       // free
-      free_recursive(node->children[idx]);
+      if (node->type() == INNERNODE) {
+        free_recursive(*(Node **)(&node->values[idx]));
+      }
+      // FIXME: node->values might not be a node (for leaf node)
+        
 
-      // if it's the last element
-      // just pop it
       if (idx == lastIdx) {
+        // if it's the last element, just pop it
         node->slot_used--;
-        return;
+      } else {
+        // otherwise, swap
+        node->keys[idx] = node->keys[lastIdx];
+        node->values[idx] = node->values[lastIdx];
+
+        node->slot_used--;
       }
 
-      // otherwise, swap
-      node->keys[idx] = node->keys[lastIdx];
-      node->children[idx] = node->children[lastIdx];
-
-      node->slot_used--;
-
-      if(key_eq(del_key, min_key_)) {
+      if(key_eq(del_key, min_key_) && node->type() == INNERNODE) {
         // todo: assert this node is left most one
-        ensure_min_range(node);
+        CHECK(node->prev == nullptr) << " A non leftmost node has a min_key";
+        ensure_min_range((InnerNode *)node);
       }
-      return;
-    }
-
-    void del_item_leaf(LeafNode *node UNUSED, const KeyType &key UNUSED) {
-      auto lastIdx = node->slot_used - 1;
-      auto idx = search_helper(node->keys, node->slot_used, key);
-      DLOG(INFO) << "search in del, idx: " << idx;
-      if (idx == -1 || !key_eq(node->keys[idx], key)) {
-        DLOG(WARNING) << "del fail, can't find key in node";
-        return;
-      }
-
-      // if it's the last element
-      // just pop it
-      if (idx == lastIdx) {
-        node->slot_used--;
-        return;
-      }
-
-      // otherwise, swap
-      node->keys[idx] = node->keys[lastIdx];
-      node->values[idx] = node->values[lastIdx];
-
-      node->slot_used--;
       return;
     }
 
     // collect kv pairs in (or under) this node
     // used for merge
     void collect_leaf(Node *node, std::vector<std::pair<KeyType, ValueType>> &container) {
-      if(node->type() == LEAFNODE) {
+      if (node->type() == LEAFNODE) {
         auto ptr = (LeafNode *)node;
         for(int i = 0; i < node->slot_used; i++) {
           container.push_back(std::make_pair(ptr->keys[i], ptr->values[i]));
         }
-      }else if(node->type() == INNERNODE) {
+      } else if (node->type() == INNERNODE) {
         auto ptr = (InnerNode *)node;
         for(int i = 0; i < node->slot_used; i++) {
-          collect_leaf(ptr->children[i], container);
+          collect_leaf(ptr->values[i], container);
         }
-      }else{
+      } else {
         assert(0);
       }
 
@@ -420,17 +365,15 @@ namespace palmtree {
      * node modifications are triggered, record them in @new_mods.
      */
     NodeMod modify_node(Node *node, const std::vector<NodeMod> &mods) {
-      DLOG(INFO) << "Modify a node ";
       if(node->type() == LEAFNODE) {
         return modify_node_leaf((LeafNode *)node, mods);
       }else{
         CHECK(node->type() == INNERNODE) << "unKnown node" << endl;
         return modify_node_inner((InnerNode *)node, mods);
       }
-      DLOG(INFO) << "Modified";
     }
 
-    NodeMod modify_node_leaf(LeafNode *node UNUSED, const std::vector<NodeMod> &mods UNUSED) {
+    NodeMod modify_node_leaf(LeafNode *node, const std::vector<NodeMod> &mods) {
       NodeMod ret(MOD_TYPE_NONE);
       auto& kv = ret.orphaned_kv;
 
@@ -473,7 +416,7 @@ namespace palmtree {
               if(buf.count(kv)) {
                 buf.erase(kv);
               }else{
-                del_item_leaf(node, kv.first);
+                del_item<LeafNode>(node, kv.first);
               }
             }
           }
@@ -489,7 +432,7 @@ namespace palmtree {
           split_input.push_back(std::make_pair(node->keys[i], node->values[i]));
         }
         // do split based on this buf
-        big_split_leaf(split_input, node, ret.node_items);
+        big_split<LeafNode, ValueType>(split_input, node, ret.node_items);
         ret.type_ = MOD_TYPE_ADD;
         return ret;
       } else {
@@ -497,11 +440,11 @@ namespace palmtree {
         for (auto& item : mods) {
           if (item.type_ == MOD_TYPE_ADD) {
             for (auto& kv : item.value_items) {
-              add_item_leaf(node, kv.first, kv.second);
+              add_item<LeafNode, ValueType>(node, kv.first, kv.second);
             }
           } else if(item.type_ == MOD_TYPE_DEC) {
             for (auto& kv : item.value_items) {
-              del_item_leaf(node, kv.first);
+              del_item<LeafNode>(node, kv.first);
             }
           }
         }
@@ -568,7 +511,7 @@ namespace palmtree {
               if(buf.count(kv)) {
                 buf.erase(kv);
               }else{
-                del_item_inner(node, kv.first);
+                del_item<InnerNode>(node, kv.first);
               }
             }
           }
@@ -581,21 +524,21 @@ namespace palmtree {
         }
 
         for(auto i = 0; i < node->slot_used; i++) {
-          split_input.push_back(std::make_pair(node->keys[i], node->children[i]));
+          split_input.push_back(std::make_pair(node->keys[i], node->values[i]));
         }
         // do split based on this buf
-        big_split_inner(split_input, node, ret.node_items);
+        big_split<InnerNode, Node *>(split_input, node, ret.node_items);
         ret.type_ = MOD_TYPE_ADD;
         return ret;
       } else {
         for (auto& item : mods) {
           if (item.type_ == MOD_TYPE_ADD) {
             for (auto& kv : item.node_items) {
-              add_item_inner(node, kv.first, kv.second);
+              add_item<InnerNode, Node *>(node, kv.first, kv.second);
             }
           } else if(item.type_ == MOD_TYPE_DEC) {
             for (auto& kv : item.node_items) {
-              del_item_inner(node, kv.first);
+              del_item<InnerNode>(node, kv.first);
             }
           }
         }
@@ -846,9 +789,9 @@ namespace palmtree {
         } else if (new_mod.type_ == MOD_TYPE_ADD) {
           DLOG(INFO) << "Split root";
           InnerNode *new_root = new InnerNode(nullptr);
-          palmtree_->add_item_inner(new_root, palmtree_->min_key_, palmtree_->tree_root);
+          palmtree_->add_item<InnerNode, Node *>(new_root, palmtree_->min_key_, palmtree_->tree_root);
           for (auto itr = new_mod.node_items.begin(); itr != new_mod.node_items.end(); itr++) {
-            palmtree_->add_item_inner(new_root, itr->first, itr->second);
+            palmtree_->add_item<InnerNode, Node *>(new_root, itr->first, itr->second);
           }
           palmtree_->tree_root = new_root;
           palmtree_->tree_depth_ += 1;
@@ -860,7 +803,7 @@ namespace palmtree {
         if (palmtree_->tree_depth_ >= 2 && palmtree_->tree_root->slot_used == 1) {
           // Decrease root height
           auto old_root = static_cast<InnerNode *>(palmtree_->tree_root);
-          palmtree_->tree_root = old_root->children[0];
+          palmtree_->tree_root = old_root->values[0];
           delete old_root;
           palmtree_->ensure_min_range(static_cast<InnerNode *>(palmtree_->tree_root));
           for (auto &wthread : palmtree_->workers_) {
@@ -870,7 +813,7 @@ namespace palmtree {
         // Naively insert orphaned
         for (auto itr = new_mod.orphaned_kv.begin(); itr != new_mod.orphaned_kv.end(); itr++) {
           auto leaf = palmtree_->search(itr->first);
-          palmtree_->add_item_leaf(leaf, itr->first, itr->second);
+          palmtree_->add_item<LeafNode, ValueType>(leaf, itr->first, itr->second);
         }
       }
 
@@ -975,7 +918,7 @@ namespace palmtree {
     void init() {
       // Init the root node
       tree_root = new InnerNode(nullptr);
-      add_item_inner((InnerNode *)tree_root, min_key_, new LeafNode(tree_root));
+      add_item<InnerNode, Node *>((InnerNode *)tree_root, min_key_, new LeafNode(tree_root));
       // Init the worker thread
       for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
         workers_.emplace_back(worker_id, this);
@@ -991,7 +934,7 @@ namespace palmtree {
       if (node->type() == INNERNODE) {
         auto ptr = (InnerNode *)node;
         for(int i = 0; i < ptr->slot_used; i++) {
-          free_recursive(ptr->children[i]);
+          free_recursive(ptr->values[i]);
         }
       }
       delete node;
