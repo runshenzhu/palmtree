@@ -7,3 +7,4 @@ build/
 autom4te.cache/
 cscope.out
 tags
+palmtree_test.dSYM/

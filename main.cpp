@@ -34,6 +34,7 @@ int main(int argc, char *argv[]) {
     DLOG(INFO) << "Remove " << i;
     palmtreep->remove(i);
     int res;
+    DLOG(INFO) << "Find " << i;
     bool success = palmtreep->find(i, res);
     if (success) {
       assert(false);

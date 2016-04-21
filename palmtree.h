@@ -359,20 +359,21 @@ namespace palmtree {
       // is not deleted.
       auto del_key = node->keys[idx];
       if (node->type() == INNERNODE) {
-        Node *inner_node = *(Node **)(&node->values[idx]);
-        if (inner_node->Node::prev != nullptr)
-          inner_node->Node::prev->next = inner_node->Node::next;
+        Node *child_node = *(Node **)(&node->values[idx]);
+        if (child_node->Node::prev != nullptr)
+          child_node->Node::prev->next = child_node->Node::next;
         else {
-          CHECK(inner_node->Node::next != nullptr) << "Sinle node in the layer should not be deleted";
-          ensure_min_range((InnerNode *)inner_node->Node::next);
+          CHECK(child_node->Node::next != nullptr) << "Sinle node in the layer should not be deleted";
+          if (child_node->type() == INNERNODE)
+            ensure_min_range((InnerNode *)child_node->Node::next);
         }
 
-        if (inner_node->Node::next != nullptr)
-          inner_node->next->Node::prev = inner_node->Node::prev;
+        if (child_node->Node::next != nullptr)
+          child_node->next->Node::prev = child_node->Node::prev;
 
-        DLOG(INFO) << "Delete node " << inner_node->id;
+        DLOG(INFO) << "Delete node " << child_node->id;
 
-        free_recursive(inner_node);
+        free_recursive(child_node);
       }
       // FIXME: node->values might not be a node (for leaf node)
 
@@ -671,6 +672,10 @@ namespace palmtree {
           auto child = inode->values[i];
           CHECK(child->parent == node) << "My child " << i << " does not point to me";
         }
+      } else {
+        LeafNode *lnode = (LeafNode *)node;
+        int idx = search_helper(lnode->keys, lnode->slot_used, min_key_);
+        CHECK(idx == -1 || lnode->Node::prev != nullptr) << "Non first leaf node has a min_key";
       }
 
       if (node->type() == INNERNODE) {
@@ -938,10 +943,12 @@ namespace palmtree {
         }
         // Merge root if neccessary
         if (palmtree_->tree_depth_ >= 2 && palmtree_->tree_root->slot_used == 1) {
+          DLOG(INFO) << "Decrease tree depth";
           // Decrease root height
           auto old_root = static_cast<InnerNode *>(palmtree_->tree_root);
           palmtree_->tree_root = old_root->values[0];
           delete old_root;
+          palmtree_->tree_depth_ -= 1;
           for (auto &wthread : palmtree_->workers_) {
              wthread.node_mods_.pop_back();
           }
@@ -1010,6 +1017,7 @@ namespace palmtree {
           // Stage 3, propagate tree modifications back
           // Propagate modifications until root
           for (int layer = 1; layer <= palmtree_->tree_depth_-1; layer++) {
+            DLOG_IF(INFO, worker_id_ == 0) << "Layer #" << layer << " begin";
             NodeModsMapType cur_mods;
             redistribute_inner_tasks(layer, cur_mods);
             auto &upper_mods = node_mods_[layer+1];
