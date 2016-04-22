@@ -307,7 +307,7 @@ namespace palmtree {
 
       // Add a new node
       NodeType* new_node = new NodeType(node->parent, node->Node::level);
-      layer_width_[node->Node::level]++;
+      layer_width_[node->Node::level]->fetch_add(1);
 
       // save the second-half in new node
       auto new_key = (*itr).first;
@@ -326,10 +326,10 @@ namespace palmtree {
       if (!node->is_few())
         return false;
 
-      int old_width = layer_width_[node->level]->fetch_sub(-1);
+      int old_width = layer_width_[node->level]->fetch_add(-1);
       if (old_width == 1) {
         // Can't merge
-        layer_width_[node->level]++;
+        layer_width_[node->level]->fetch_add(1);
         return false;
       }
 
@@ -401,7 +401,7 @@ namespace palmtree {
         for(int i = 0; i < node->slot_used; i++) {
           collect_leaf(ptr->values[i], container);
         }
-        layer_width_[node->level-1] -= node->slot_used;
+        layer_width_[node->level-1]->fetch_add(-node->slot_used);
       } else {
         assert(0);
       }
@@ -671,7 +671,7 @@ namespace palmtree {
       std::string space;
       for (int i = 0; i < indent; i++)
         space += " ";
-      DLOG(INFO) << space << node->to_string();
+      DLOG(INFO) << space << node->to_string() << " | Layer size " << layer_width_[node->level]->load();;
 
 //      if(node->type() == LEAFNODE) {
 //        auto leaf_node = (LeafNode *)node;
