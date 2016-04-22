@@ -634,7 +634,7 @@ namespace palmtree {
     void ensure_min_key() {
       auto ptr = (Node *)tree_root;
       while(ptr->type() == INNERNODE) {
-        auto inner = (LeafNode *)ptr;
+        auto inner = (InnerNode *)ptr;
         inner->keys[0] = min_key_;
         ptr = inner->values[0];
       }
@@ -945,6 +945,7 @@ namespace palmtree {
           auto leaf = palmtree_->search(itr->first);
           palmtree_->add_item<LeafNode, ValueType>(leaf, itr->first, itr->second);
         }
+        palmtree_->ensure_min_key();
         DLOG(INFO) << "Root handled";
       }
 
