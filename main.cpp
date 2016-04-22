@@ -19,6 +19,23 @@ int main(int argc, char *argv[]) {
   palmtree::PalmTree<int, int> *palmtreep = &palmtree;
 
   std::vector<std::thread> threads;
+
+  for (int i = 0; i < 32; i++) {
+    palmtreep->insert(i, i);
+  }
+
+  for (int i = 16; i <= 30; i++) {
+     palmtreep->remove(i);
+  }
+
+  for (int i = 0; i <= 15; i++) {
+    palmtreep->remove(i);
+  }
+
+  palmtreep->remove(31);
+
+  return 0;
+
   for (int i = 0; i < 32; i++) {
    // threads.push_back(std::thread([palmtreep, i]() {
       int res;

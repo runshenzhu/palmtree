@@ -105,7 +105,7 @@ namespace palmtree {
       }
 
       virtual inline bool is_few() {
-        return Node::slot_used < MAX_SLOT/2 || Node::slot_used == 0;
+        return Node::slot_used < MAX_SLOT/4 || Node::slot_used == 0;
       }
 
     };
@@ -295,7 +295,7 @@ namespace palmtree {
         return key_less(p1.first, p2.first);
       });
 
-      int half_size = (int) input.size() / 2;
+      int half_size = (int) input.size() / 2 + 1;
       auto itr = input.begin();
 
       // save first half items (small part) in old node
@@ -970,7 +970,7 @@ namespace palmtree {
           palmtree_->layer_width_.emplace_back(new std::atomic<int>(1));
         }
         // Merge root if neccessary
-        if (palmtree_->tree_depth_ >= 2 && palmtree_->tree_root->slot_used == 1) {
+        while (palmtree_->tree_depth_ >= 2 && palmtree_->tree_root->slot_used == 1) {
           DLOG(INFO) << "Decrease tree depth";
           // Decrease root height
           auto old_root = static_cast<InnerNode *>(palmtree_->tree_root);
