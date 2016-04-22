@@ -50,8 +50,8 @@ namespace palmtree {
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 1;
-    static const int BATCH_SIZE = 1;
+    static const int NUM_WORKER = 2;
+    static const int BATCH_SIZE = 2;
 
   private:
     /**
@@ -228,6 +228,8 @@ namespace palmtree {
     int tree_depth_;
     // Number of nodes on each layer
     std::vector<std::atomic<int> *> layer_width_;
+    // Is the tree being destroyed or not
+    bool destroyed_;
     // Minimal key
     KeyType min_key_;
     // Key comparator
@@ -779,11 +781,6 @@ namespace palmtree {
       void start() {
         wthread_ = boost::thread(&WorkerThread::worker_loop, this);
       }
-      void exit() {
-        done_ = true;
-        wthread_.join();
-      }
-
       // The #0 thread is responsible to collect tasks to a batch
       void collect_batch() {
         DLOG(INFO) << "Thread " << worker_id_ << " collect tasks";
@@ -807,15 +804,23 @@ namespace palmtree {
           return;
 
         // Partition the task among threads
-        const int task_per_thread = palmtree_->current_batch_.size() / NUM_WORKER;
-        for (int i = 0; i < BATCH_SIZE; i += task_per_thread) {
-          // Clear old tasks
-          palmtree_->workers_[i/task_per_thread].current_tasks_.clear();
-          for (int j = 0; j < task_per_thread; j++)
-            palmtree_->workers_[i/task_per_thread].current_tasks_
-              .push_back(palmtree_->current_batch_[i+j]);
-        }
+        int batch_size = palmtree_->current_batch_.size();
+        int task_per_thread = batch_size / NUM_WORKER;
+        int task_residue = batch_size - task_per_thread * NUM_WORKER;
+        int worker_id = 0;
 
+        int i;
+        for (i = 0; i < batch_size; worker_id++) {
+          int ntask = task_per_thread + (task_residue > 0 ? 1 : 0);
+          // Clear old tasks
+          palmtree_->workers_[worker_id].current_tasks_.clear();
+          for (int j = i; j < i+ntask; j++)
+            palmtree_->workers_[worker_id].current_tasks_
+              .push_back(palmtree_->current_batch_[j]);
+          i += ntask;
+          task_residue--;
+        }
+        CHECK(i == batch_size) << "Not all work distributed";
         // According to the paper, a pre-sort of the batch of tasks might
         // be beneficial
       }
@@ -948,7 +953,6 @@ namespace palmtree {
             root_mods.insert(root_mods.end(), itr->second.begin(), itr->second.end());
           }
         }
-
         // Handle over to modify_node
         auto new_mod = palmtree_->modify_node(palmtree_->tree_root, root_mods);
         if (new_mod.type_ == MOD_TYPE_NONE) {
@@ -1001,8 +1005,16 @@ namespace palmtree {
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 0: collect tasks";
           if (worker_id_ == 0) {
             collect_batch();
+            // Check if the tree is destroyed, we must do it before the sync point
+            if (palmtree_->destroyed_) {
+              for (int i = 0; i < NUM_WORKER; i++)
+                palmtree_->workers_[i].done_ = true;
+            };
           }
           palmtree_->sync();
+          if (done_)
+            DLOG(INFO) << "Worker " << worker_id_ << " exit";
+
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 0 finished";
           // Stage 1, Search for leafs
           DLOG(INFO) << "Worker " << worker_id_ << " got " << current_tasks_.size() << " tasks";
@@ -1078,10 +1090,11 @@ namespace palmtree {
              }
              wthread.current_tasks_.clear();
             }
+            palmtree_->ensure_tree_structure(palmtree_->tree_root, 0);
           }
-          palmtree_->ensure_tree_structure(palmtree_->tree_root, 0);
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4 finished";
         } // End worker loop
+        DLOG(INFO) << "Worker " << worker_id_ << " exited";
       }
     }; // End WorkerThread
 
@@ -1090,7 +1103,7 @@ namespace palmtree {
      * PalmTree public    *
      * ********************/
   public:
-    PalmTree(KeyType min_key): tree_depth_(1), min_key_(min_key), barrier_{NUM_WORKER}, task_queue_{10240} {
+    PalmTree(KeyType min_key): tree_depth_(1), destroyed_(false), min_key_(min_key), barrier_{NUM_WORKER}, task_queue_{10240} {
       init();
     }
 
@@ -1125,9 +1138,9 @@ namespace palmtree {
 
     ~PalmTree() {
       DLOG(INFO) << "Destroy palm tree";
-      for (auto &worker : workers_) {
-        worker.exit();
-      }
+      destroyed_ = true;
+      for (auto &wthread : workers_)
+        wthread.wthread_.join();
       // Free atomic layer width
       while (!layer_width_.empty()) {
         delete layer_width_.back();

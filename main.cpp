@@ -34,19 +34,17 @@ int main(int argc, char *argv[]) {
 
   palmtreep->remove(31);
 
-  return 0;
-
   for (int i = 0; i < 32; i++) {
-   // threads.push_back(std::thread([palmtreep, i]() {
+   threads.push_back(std::thread([palmtreep, i]() {
       int res;
       palmtreep->insert(i, i);
       bool success = palmtreep->find(i, res);
       if (success) {
         DLOG(INFO) << "Thread " << i << " get " << res;
       } else {
-        assert(false);
+        CHECK(false) << "It should find something";
       }
-//    }));
+    }));
   }
 
   for (int i = 0; i < 32; i++) {
