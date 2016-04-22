@@ -62,23 +62,25 @@ namespace palmtree {
       // Number of actually used slots
       int slot_used;
       int id;
+      int level;
       KeyType lower_bound;
       Node *parent;
       Node *prev;
       Node *next;
 
       Node() = delete;
-      Node(Node *p): slot_used(0), parent(p), prev(nullptr), next(nullptr) { id = NODE_NUM++; };
+      Node(Node *p, int lvl): slot_used(0), level(lvl), parent(p), prev(nullptr), next(nullptr) {
+        id = NODE_NUM++;
+      };
       virtual ~Node() {};
       virtual std::string to_string() = 0;
       virtual NodeType type() const = 0;
-      bool is_single() { return prev == nullptr && next == nullptr ;}
-
+      virtual bool is_few() = 0;
     };
 
     struct InnerNode : public Node {
       InnerNode() = delete;
-      InnerNode(Node *parent): Node(parent){};
+      InnerNode(Node *parent, int level): Node(parent, level){};
       virtual ~InnerNode() {};
       // Keys for values
       KeyType keys[MAX_SLOT];
@@ -91,7 +93,7 @@ namespace palmtree {
 
       virtual std::string to_string() {
         std::string res;
-        res += "InnerNode[" + std::to_string(Node::id) + "] ";
+        res += "InnerNode[" + std::to_string(Node::id) + " @ " + std::to_string(Node::level) + "] ";
         if (Node::prev != nullptr)
           res += "left: " + std::to_string(Node::prev->id);
         else
@@ -113,7 +115,7 @@ namespace palmtree {
         return Node::slot_used == MAX_SLOT;
       }
 
-      inline bool is_few() const {
+      virtual inline bool is_few() {
         return Node::slot_used < MAX_SLOT/2 || Node::slot_used == 0;
       }
 
@@ -121,7 +123,7 @@ namespace palmtree {
 
     struct LeafNode : public Node {
       LeafNode() = delete;
-      LeafNode(Node *parent): Node(parent){};
+      LeafNode(Node *parent, int level): Node(parent, level){};
       virtual ~LeafNode() {};
 
       // Keys and values for leaf node
@@ -134,7 +136,7 @@ namespace palmtree {
 
       virtual std::string to_string() {
         std::string res;
-        res += "LeafNode[" + std::to_string(Node::id) + "] ";
+        res += "LeafNode[" + std::to_string(Node::id) + " @ " + std::to_string(Node::level) + "] ";
 
         if (Node::prev != nullptr)
           res += "left: " + std::to_string(Node::prev->id);
@@ -158,7 +160,7 @@ namespace palmtree {
         return Node::slot_used == MAX_SLOT;
       }
 
-      inline bool is_few() const {
+      virtual inline bool is_few() {
         return Node::slot_used < MAX_SLOT/4 || Node::slot_used == 0;
       }
     };
@@ -233,6 +235,8 @@ namespace palmtree {
     Node *tree_root;
     // Height of the tree
     int tree_depth_;
+    // Number of nodes on each layer
+    std::vector<std::atomic<int> *> layer_width_;
     // Minimal key
     KeyType min_key_;
     // Key comparator
@@ -310,7 +314,9 @@ namespace palmtree {
         itr++;
       }
 
-      NodeType* new_node = new NodeType(node->parent);
+      // Add a new node
+      NodeType* new_node = new NodeType(node->parent, node->Node::level);
+      layer_width_[node->Node::level]++;
 
       // save the second-half in new node
       auto new_key = (*itr).first;
@@ -327,6 +333,22 @@ namespace palmtree {
       new_node->prev = node;
 
       new_nodes.push_back(std::make_pair(new_key, new_node));
+    }
+
+    // Warning: if this function return true, the width of the layer will be
+    // decreased by 1, so the caller must actually merge the node
+    bool must_merge(Node *node) {
+      if (!node->is_few())
+        return false;
+
+      int old_width = layer_width_[node->level]->fetch_sub(-1);
+      if (old_width == 1) {
+        // Can't merge
+        layer_width_[node->level]++;
+        return false;
+      }
+
+      return true;
     }
 
     template <typename NodeType, typename V>
@@ -372,7 +394,6 @@ namespace palmtree {
           child_node->next->Node::prev = child_node->Node::prev;
 
         DLOG(INFO) << "Delete node " << child_node->id;
-
         free_recursive(child_node);
       }
       // FIXME: node->values might not be a node (for leaf node)
@@ -409,6 +430,7 @@ namespace palmtree {
         for(int i = 0; i < node->slot_used; i++) {
           collect_leaf(ptr->values[i], container);
         }
+        layer_width_[node->level-1] -= node->slot_used;
       } else {
         assert(0);
       }
@@ -513,9 +535,7 @@ namespace palmtree {
       // fixme: never merge the first leafnode
       // because the min_key is in this node
       // we can't delete min_key
-      DLOG(INFO) << node->is_single();
-      DLOG(INFO) << node->is_few();
-      if (node->is_few() && !node->is_single()) {
+      if (must_merge(node)) {
         DLOG(INFO) << "Merge leaf node " << node->id;
         collect_leaf(node, ret.orphaned_kv);
         ret.node_items.push_back(std::make_pair(node_key, node));
@@ -614,12 +634,14 @@ namespace palmtree {
               DLOG(INFO) << "Del item " << kv.first;
               del_item<InnerNode>(node, kv.first);
             }
+          } else {
+             DLOG(INFO) << "A NOOP has propagated";
           }
         }
       }
 
       // merge
-      if (node->is_few() && !node->is_single()) {
+      if (must_merge(node)) {
         collect_leaf(node, ret.orphaned_kv);
         ret.node_items.push_back(std::make_pair(node_key, node));
         ret.type_ = MOD_TYPE_DEC;
@@ -630,6 +652,8 @@ namespace palmtree {
         if (node->next != nullptr) {
           node->next->prev = node->prev;
         }
+      } else {
+         DLOG(INFO) << "Don't merge " << layer_width_[node->level]->load() << " " << node->is_few() << " " << node->slot_used;
       }
 
       return ret;
@@ -928,7 +952,7 @@ namespace palmtree {
           DLOG(INFO) << "Root won't split";
         } else if (new_mod.type_ == MOD_TYPE_ADD) {
           DLOG(INFO) << "Split root";
-          InnerNode *new_root = new InnerNode(nullptr);
+          InnerNode *new_root = new InnerNode(nullptr, palmtree_->tree_root->level+1);
           palmtree_->tree_root->parent = new_root;
           palmtree_->add_item<InnerNode, Node *>(new_root, palmtree_->min_key_, palmtree_->tree_root);
           for (auto itr = new_mod.node_items.begin(); itr != new_mod.node_items.end(); itr++) {
@@ -940,6 +964,7 @@ namespace palmtree {
           for (auto &wthread : palmtree_->workers_) {
              wthread.node_mods_.push_back(NodeModsMapType());
           }
+          palmtree_->layer_width_.emplace_back(new std::atomic<int>(1));
         }
         // Merge root if neccessary
         if (palmtree_->tree_depth_ >= 2 && palmtree_->tree_root->slot_used == 1) {
@@ -952,6 +977,8 @@ namespace palmtree {
           for (auto &wthread : palmtree_->workers_) {
              wthread.node_mods_.pop_back();
           }
+          delete palmtree_->layer_width_.back();
+          palmtree_->layer_width_.pop_back();
         }
         DLOG(INFO) << "Insert orphaned";
         // Naively insert orphaned
@@ -961,7 +988,7 @@ namespace palmtree {
           palmtree_->add_item<LeafNode, ValueType>(leaf, itr->first, itr->second);
         }
         DLOG(INFO) << "Root handled";
-      }
+      } // End of handle_root()
 
       // Worker loop: process tasks
       void worker_loop() {
@@ -1065,8 +1092,11 @@ namespace palmtree {
 
     void init() {
       // Init the root node
-      tree_root = new InnerNode(nullptr);
-      add_item<InnerNode, Node *>((InnerNode *)tree_root, min_key_, new LeafNode(tree_root));
+      tree_root = new InnerNode(nullptr, 1);
+      add_item<InnerNode, Node *>((InnerNode *)tree_root, min_key_, new LeafNode(tree_root, 0));
+      // Init layer width
+      layer_width_.push_back(new std::atomic<int>(1));
+      layer_width_.push_back(new std::atomic<int>(1));
       // Init the worker thread
       for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
         workers_.emplace_back(worker_id, this);
@@ -1085,6 +1115,7 @@ namespace palmtree {
           free_recursive(ptr->values[i]);
         }
       }
+
       delete node;
     }
 
@@ -1093,6 +1124,12 @@ namespace palmtree {
       for (auto &worker : workers_) {
         worker.exit();
       }
+      // Free atomic layer width
+      while (!layer_width_.empty()) {
+        delete layer_width_.back();
+        layer_width_.pop_back();
+      }
+
       free_recursive(tree_root);
     }
 
@@ -1132,6 +1169,6 @@ namespace palmtree {
     }
   }; // End of PalmTree
   // Explicit template initialization
-  // template class PalmTree<int, int>;
+  template class PalmTree<int, int>;
 } // End of namespace palmtree
 
