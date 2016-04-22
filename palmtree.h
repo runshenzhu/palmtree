@@ -307,7 +307,7 @@ namespace palmtree {
 
       // Add a new node
       NodeType* new_node = new NodeType(node->parent, node->Node::level);
-      layer_width_[node->Node::level]++;
+      layer_width_[node->Node::level]->fetch_add(1);
 
       // save the second-half in new node
       auto new_key = (*itr).first;
@@ -326,10 +326,10 @@ namespace palmtree {
       if (!node->is_few())
         return false;
 
-      int old_width = layer_width_[node->level]->fetch_sub(-1);
+      int old_width = layer_width_[node->level]->fetch_add(-1);
       if (old_width == 1) {
         // Can't merge
-        layer_width_[node->level]++;
+        layer_width_[node->level]->fetch_add(1);
         return false;
       }
 
@@ -401,7 +401,7 @@ namespace palmtree {
         for(int i = 0; i < node->slot_used; i++) {
           collect_leaf(ptr->values[i], container);
         }
-        layer_width_[node->level-1] -= node->slot_used;
+        layer_width_[node->level-1]->fetch_add(-node->slot_used);
       } else {
         assert(0);
       }
@@ -667,7 +667,22 @@ namespace palmtree {
       }
     }
 
-    void ensure_tree_structure(Node *node, int indent = 0) {
+    void ensure_tree_structure(Node *node, int indent) {
+      std::map<int, int> recorder;
+      ensure_tree_structure_helper(node, indent, recorder);
+
+      CHECK(layer_width_.size() == recorder.size()) << "mismatch layer";
+      for(auto itr = recorder.begin(); itr != recorder.end(); itr++) {
+        CHECK(layer_width_[itr->first]->load() == itr->second) << "mismatch layer size in "<< itr->first <<" , expect: " << layer_width_[itr->first]->load()<< " actual "<<itr->second;
+      }
+
+    }
+    void ensure_tree_structure_helper(Node *node, int indent, std::map<int, int>& layer_size_recorder) {
+      if(layer_size_recorder.count(node->level)) {
+        layer_size_recorder[node->level]++;
+      } else {
+        layer_size_recorder[node->level] = 1;
+      }
       std::string space;
       for (int i = 0; i < indent; i++)
         space += " ";
@@ -715,7 +730,7 @@ namespace palmtree {
         }
 
         for (int i = 0; i < inode->slot_used; i++) {
-          ensure_tree_structure(inode->values[i], indent + 4);
+          ensure_tree_structure_helper(inode->values[i], indent + 4, layer_size_recorder);
         }
       }
     }
@@ -1033,7 +1048,7 @@ namespace palmtree {
           // Stage 3, propagate tree modifications back
           // Propagate modifications until root
           for (int layer = 1; layer <= palmtree_->tree_depth_-1; layer++) {
-            DLOG_IF(INFO, worker_id_ == 0) << "Layer #" << layer << " begin";
+            // DLOG_IF(INFO, worker_id_ == 0) << "Layer #" << layer << " begin";
             NodeModsMapType cur_mods;
             redistribute_inner_tasks(layer, cur_mods);
             auto &upper_mods = node_mods_[layer+1];
@@ -1049,7 +1064,7 @@ namespace palmtree {
               upper_mods[node->parent].push_back(mod_res);
             }
             palmtree_->sync();
-            DLOG_IF(INFO, worker_id_ == 0) << "Layer #" << layer << " done";
+            // DLOG_IF(INFO, worker_id_ == 0) << "Layer #" << layer << " done";
           } // End propagate
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 3 finished";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4: Handle root";
