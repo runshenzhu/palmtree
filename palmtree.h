@@ -36,6 +36,8 @@ namespace palmtree {
     LEAFNODE
   };
 
+  static bool handling_root = false;
+
   template <typename KeyType,
            typename ValueType,
            typename PairType = std::pair<KeyType, ValueType>,
@@ -292,7 +294,7 @@ namespace palmtree {
      */
     template<typename NodeType, typename V>
     void big_split(std::vector<std::pair<KeyType, V>> &input, NodeType *node, std::vector<std::pair<KeyType, Node *>> &new_nodes) {
-
+      CHECK(handling_root == false) << "can't split in handle root";
       std::sort(input.begin(), input.end(), [this](const std::pair<KeyType, V> &p1, const std::pair<KeyType, V> &p2) {
         return key_less(p1.first, p2.first);
       });
@@ -944,6 +946,7 @@ namespace palmtree {
        * @brief Handle root split and re-insert orphaned keys. It may need to grow the tree height
        */
       void handle_root() {
+
         int root_depth = palmtree_->tree_depth_;
         std::vector<NodeMod> root_mods;
         // Collect root modifications from all threads
@@ -1083,7 +1086,9 @@ namespace palmtree {
           // Stage 4, modify the root, re-insert orphaned, mark work as done
           if (worker_id_ == 0) {
             // Mark tasks as done
+            handling_root = true;
             handle_root();
+            handling_root = false;
             for (auto &wthread : palmtree_->workers_) {
              for (auto op : wthread.current_tasks_) {
                op->done_ = true;
