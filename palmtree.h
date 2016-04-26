@@ -1114,11 +1114,10 @@ namespace palmtree {
       // Init layer width
       layer_width_.push_back(new std::atomic<int>(1));
       layer_width_.push_back(new std::atomic<int>(1));
-      // Init the worker thread
+      // Init the worker thread and start them
       for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
         workers_.emplace_back(worker_id, this);
       }
-
       for (auto &worker : workers_) {
          worker.start();
       }
@@ -1138,7 +1137,9 @@ namespace palmtree {
 
     ~PalmTree() {
       DLOG(INFO) << "Destroy palm tree";
+      // Mark the tree as destroyed
       destroyed_ = true;
+      // Join all workter thread
       for (auto &wthread : workers_)
         wthread.wthread_.join();
       // Free atomic layer width
@@ -1146,8 +1147,16 @@ namespace palmtree {
         delete layer_width_.back();
         layer_width_.pop_back();
       }
-
+      // Free all tree nodes
       free_recursive(tree_root);
+    }
+
+    /**
+     * @brief execute a batch of tree operations, the batch will be executed
+     *  cooperatively by all worker threads
+     */
+    void execute_batch(vector<TreeOp> &operations UNUSED) {
+
     }
 
     /**
