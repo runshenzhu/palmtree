@@ -36,6 +36,7 @@ namespace palmtree {
     LEAFNODE
   };
 
+
   template <typename KeyType,
            typename ValueType,
            typename PairType = std::pair<KeyType, ValueType>,
@@ -292,7 +293,6 @@ namespace palmtree {
      */
     template<typename NodeType, typename V>
     void big_split(std::vector<std::pair<KeyType, V>> &input, NodeType *node, std::vector<std::pair<KeyType, Node *>> &new_nodes) {
-
       std::sort(input.begin(), input.end(), [this](const std::pair<KeyType, V> &p1, const std::pair<KeyType, V> &p2) {
         return key_less(p1.first, p2.first);
       });
@@ -847,6 +847,7 @@ namespace palmtree {
         for (int i = worker_id_+1; i < NUM_WORKER; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
           for (auto op : wthread.current_tasks_) {
+            CHECK(op->target_node_ != nullptr) << "worker " << i <<" hasn't finished search";
             if (result.find(op->target_node_) != result.end()) {
               result[op->target_node_].push_back(op);
             }
@@ -944,6 +945,7 @@ namespace palmtree {
        * @brief Handle root split and re-insert orphaned keys. It may need to grow the tree height
        */
       void handle_root() {
+
         int root_depth = palmtree_->tree_depth_;
         std::vector<NodeMod> root_mods;
         // Collect root modifications from all threads
