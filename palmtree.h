@@ -14,6 +14,7 @@
 #include <memory>
 #include <atomic>
 #include <glog/logging.h>
+#include "CycleTimer.h"
 
 using std::cout;
 using std::endl;
@@ -47,12 +48,12 @@ namespace palmtree {
     // Max number of slots per leaf node
     static const int LEAF_MAX_SLOT = 1024;
 
-    static const int MAX_SLOT = 3;
+    static const int MAX_SLOT = 512;
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
     static const int NUM_WORKER = 2;
-    static const int BATCH_SIZE = 2;
+    static const int BATCH_SIZE = 32 * NUM_WORKER;
 
   private:
     /**
@@ -184,7 +185,7 @@ namespace palmtree {
       // that conditional variable could be very expensive
       inline void wait() {
         while (!done_) {
-          boost::this_thread::sleep_for(boost::chrono::milliseconds(10));
+          boost::this_thread::sleep_for(boost::chrono::milliseconds(1));
         }
       }
     };
@@ -244,6 +245,8 @@ namespace palmtree {
     inline bool key_eq(const KeyType &k1, const KeyType &k2) {
       return !kcmp(k1, k2) && !kcmp(k2, k1);
     }
+
+
     // Return the index of the largest slot whose key <= @target
     // assume there is no duplicated element
     int search_helper(const KeyType *input, int size, const KeyType &target) {
@@ -264,6 +267,43 @@ namespace palmtree {
       return res;
     }
 
+    // liner search in leaf
+    // assume there is no duplicated element
+    int search_leaf(const KeyType *input, int size, const KeyType &target) {
+      int res = -1;
+      // loop all element
+      for (int i = 0; i < size; i++) {
+        if(key_eq(target, input[i])){
+          // target < input
+          // ignore
+          return i;
+        }
+      }
+      return res;
+    }
+
+
+    // Return the index of the largest slot whose key <= @target
+    // assume there is no duplicated element
+    int search_inner(const KeyType *input, int size, const KeyType &target) {
+      int low = 0, high = size - 1;
+      while (low != high) {
+        int mid = (low + high) / 2 + 1;
+        if (key_less(target, input[mid])) {
+          // target < input[mid]
+          high = mid - 1;
+        }
+        else {
+          // target >= input[mid];
+          low = mid;
+        }
+      }
+      if (low == size) {
+        return -1;
+      }
+      return low;
+    }
+
     /**
      * @brief Return the leaf node that contains the @key
      */
@@ -272,7 +312,7 @@ namespace palmtree {
       auto ptr = (InnerNode *)tree_root;
       for (;;) {
         CHECK(ptr->slot_used > 0) << "Search empty inner node";
-        auto idx = this->search_helper(ptr->keys, ptr->slot_used, key);
+        auto idx = this->search_inner(ptr->keys, ptr->slot_used, key);
         CHECK(idx != -1) << "search innerNode fail" << endl;
         Node *child = ptr->values[idx];
         if (child->type() == LEAFNODE) {
@@ -303,7 +343,10 @@ namespace palmtree {
       // save first half items (small part) in old node
       node->slot_used = 0;
       for (int i = 0; i < half_size; i++) {
-        add_item<NodeType, V>(node, itr->first, itr->second);
+        // add_item<NodeType, V>(node, itr->first, itr->second);
+        node->keys[i] = itr->first;
+        node->values[i] = itr->second;
+        node->slot_used++;
         itr++;
       }
 
@@ -313,12 +356,15 @@ namespace palmtree {
 
       // save the second-half in new node
       auto new_key = (*itr).first;
+      int i = 0;
       while(itr != input.end()){
-        add_item<NodeType, V>(new_node, itr->first, itr->second);
+        // add_item<NodeType, V>(new_node, itr->first, itr->second);
+        new_node->keys[i] = itr->first;
+        new_node->values[i] = itr->second;
+        new_node->slot_used++;
         itr++;
+        i++;
       }
-
-
       new_nodes.push_back(std::make_pair(new_key, new_node));
     }
 
@@ -340,10 +386,31 @@ namespace palmtree {
 
     template <typename NodeType, typename V>
     void add_item(NodeType *node, const KeyType &key, V value) {
-      auto idx = node->slot_used++;
-      node->keys[idx] = key;
-      node->values[idx] = value;
-      return;
+      // add item to leaf node
+      // just append it to the end of the slot
+      if (node->type() == LEAFNODE) {
+        auto idx = node->slot_used++;
+        node->keys[idx] = key;
+        node->values[idx] = value;
+        return;
+      }
+
+
+      // add item to inner node
+      // ensure it's order
+      DLOG(INFO) << "search inner begin";
+      auto idx = search_inner(node->keys, node->slot_used, key);
+      DLOG(INFO) << "search inner end";
+      auto k = key;
+      auto v = value;
+      for(int i = idx + 1; i < node->slot_used; i++) {
+        std::swap(node->keys[i], k);
+        std::swap(node->values[i], v);
+      }
+
+      node->keys[node->slot_used] = k;
+      node->values[node->slot_used] = v;
+      node->slot_used++;
     }
 
 
@@ -367,26 +434,36 @@ namespace palmtree {
         Node *child_node = *(Node **)(&node->values[idx]);
         DLOG(INFO) << "Delete node " << child_node->id;
         free_recursive(child_node);
+
+        KeyType del_key = node->keys[idx];
+
+        // auto k = node->keys[idx];
+        // auto v = node->value[idx];
+        for(int i = idx; i < node->slot_used - 1; i++) {
+          std::swap(node->keys[i], node->keys[i + 1]);
+          std::swap(node->values[i], node->values[i + 1]);
+        }
+
+        if(idx == 0) {
+          node->keys[0] = del_key;
+        }
+
+        node->slot_used--;
+
+
+      }else {
+        // del in leaf
+        if (idx == lastIdx) {
+          // if it's the last element, just pop it
+          node->slot_used--;
+        } else {
+          // otherwise, swap
+          node->keys[idx] = node->keys[lastIdx];
+          node->values[idx] = node->values[lastIdx];
+          node->slot_used--;
+        }
       }
 
-      auto del_key = node->keys[idx];
-      if (idx == lastIdx) {
-        // if it's the last element, just pop it
-        node->slot_used--;
-      } else {
-        // otherwise, swap
-        node->keys[idx] = node->keys[lastIdx];
-        node->values[idx] = node->values[lastIdx];
-        node->slot_used--;
-      }
-
-      // If the idx of key to be deleted is 0,
-      // this key is the smallest one in the node,
-      // we need to replace the second smallest key with this key
-      // and place it the idx 0
-      if(idx == 0 && node->type() == INNERNODE) {
-        ensure_min_range((InnerNode *)node, del_key);
-      }
       return;
     }
 
@@ -549,6 +626,7 @@ namespace palmtree {
       }
 
       if (num >= MAX_SLOT) {
+        DLOG(INFO) << "inner will split";
         auto comp = [this](const std::pair<KeyType, Node *> &p1, const std::pair<KeyType, Node *> &p2) {
           return key_less(p1.first, p2.first);
         };
@@ -596,6 +674,7 @@ namespace palmtree {
         ret.type_ = MOD_TYPE_ADD;
         return ret;
       } else {
+        DLOG(INFO) << "inner not split";
         for (auto& item : mods) {
           if (item.type_ == MOD_TYPE_ADD) {
             for (auto& kv : item.node_items) {
@@ -749,6 +828,7 @@ namespace palmtree {
      * ************************/
     boost::barrier barrier_;
     boost::lockfree::queue<TreeOp *> task_queue_;
+
     // The current batch that is being processed
     std::vector<TreeOp *> current_batch_;
 
@@ -783,7 +863,7 @@ namespace palmtree {
       }
       // The #0 thread is responsible to collect tasks to a batch
       void collect_batch() {
-        DLOG(INFO) << "Thread " << worker_id_ << " collect tasks";
+        DLOG(INFO) << "Thread " << worker_id_ << " collect tasks " << BATCH_SIZE;
         palmtree_->current_batch_.clear();
 
         int sleep_time = 0;
@@ -795,7 +875,7 @@ namespace palmtree {
           } else
             boost::this_thread::sleep_for(boost::chrono::milliseconds(10));
           sleep_time += 1;
-          if (sleep_time > 3)
+          if (sleep_time > 3000)
             break;
         }
 
@@ -803,17 +883,25 @@ namespace palmtree {
         if (palmtree_->current_batch_.size() == 0)
           return;
 
+        // firstly sort the batch
+        std::sort(current_batch_.begin(), current_batch_.end(), [this](const TreeOp *op1, const TreeOp *op2) {
+            return key_less(op1->key_, op2->key_);
+        });
         // Partition the task among threads
         int batch_size = palmtree_->current_batch_.size();
         int task_per_thread = batch_size / NUM_WORKER;
         int task_residue = batch_size - task_per_thread * NUM_WORKER;
         int worker_id = 0;
 
+        for(int i = 0; i < NUM_WORKER; i++){
+          // Clear old tasks
+          palmtree_->workers_[worker_id].current_tasks_.clear();
+        }
+
         int i;
         for (i = 0; i < batch_size; worker_id++) {
           int ntask = task_per_thread + (task_residue > 0 ? 1 : 0);
-          // Clear old tasks
-          palmtree_->workers_[worker_id].current_tasks_.clear();
+
           for (int j = i; j < i+ntask; j++)
             palmtree_->workers_[worker_id].current_tasks_
               .push_back(palmtree_->current_batch_[j]);
@@ -832,6 +920,7 @@ namespace palmtree {
           if (result.find(op->target_node_) == result.end()) {
             result.emplace(op->target_node_, std::vector<TreeOp *>());
           }
+          
           result[op->target_node_].push_back(op);
         }
 
@@ -854,7 +943,7 @@ namespace palmtree {
           }
         }
 
-        DLOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution";
+        LOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution";
       }
 
       /**
@@ -937,6 +1026,8 @@ namespace palmtree {
                 leaf_mods.emplace(leaf, std::vector<NodeMod>());
               leaf_mods[leaf].push_back(NodeMod(*op));
             }
+
+
           }
         }
       }
@@ -1023,7 +1114,9 @@ namespace palmtree {
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 1: search for leaves";
           for (auto op : current_tasks_) {
             op->target_node_ = palmtree_->search(op->key_);
+            CHECK(op->target_node_ != nullptr) << "search returns nullptr";
           }
+          asm volatile("": : :"memory");
           palmtree_->sync();
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 1 finished";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 2: Process leaves";
@@ -1080,19 +1173,27 @@ namespace palmtree {
             palmtree_->sync();
             // DLOG_IF(INFO, worker_id_ == 0) << "Layer #" << layer << " done";
           } // End propagate
+
+          palmtree_->sync();
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 3 finished";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4: Handle root";
           // Stage 4, modify the root, re-insert orphaned, mark work as done
           if (worker_id_ == 0) {
             // Mark tasks as done
             handle_root();
+
             for (auto &wthread : palmtree_->workers_) {
-             for (auto op : wthread.current_tasks_) {
+
+              for (auto op : wthread.current_tasks_) {
                op->done_ = true;
-             }
-             wthread.current_tasks_.clear();
+                // delete op;
+                // delete op;
+                palmtree_->task_nums--;
+              }
+
+              wthread.current_tasks_.clear();
             }
-            palmtree_->ensure_tree_structure(palmtree_->tree_root, 0);
+            // palmtree_->ensure_tree_structure(palmtree_->tree_root, 0);
           }
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4 finished";
         } // End worker loop
@@ -1105,8 +1206,12 @@ namespace palmtree {
      * PalmTree public    *
      * ********************/
   public:
+    std::atomic<int> task_nums;
+    double start_time_;
+
     PalmTree(KeyType min_key): tree_depth_(1), destroyed_(false), min_key_(min_key), barrier_{NUM_WORKER}, task_queue_{10240} {
       init();
+      start_time_ = CycleTimer::currentSeconds();
     }
 
     void init() {
@@ -1124,6 +1229,8 @@ namespace palmtree {
       for (auto &worker : workers_) {
          worker.start();
       }
+
+      task_nums = 0;
     }
 
     // Recursively free the resources of one tree node
@@ -1139,7 +1246,14 @@ namespace palmtree {
     }
 
     ~PalmTree() {
-      DLOG(INFO) << "Destroy palm tree";
+      LOG(INFO) << "Destroy palm tree " << task_nums;
+
+      while(task_nums != 0) ;
+
+      double end_time = CycleTimer::currentSeconds();
+      double runtime = end_time - start_time_;
+      LOG(INFO) << "Run for " << runtime << " seconds";
+
       destroyed_ = true;
       for (auto &wthread : workers_)
         wthread.wthread_.join();
@@ -1157,34 +1271,39 @@ namespace palmtree {
      * @param key the key to be retrieved
      * @return nullptr if no such k,v pair
      */
-    bool find(const KeyType &key UNUSED, ValueType &value) {
-      TreeOp op(TREE_OP_FIND, key);
-      task_queue_.push(&op);
+    bool find(const KeyType &key UNUSED, ValueType &value UNUSED) {
+      TreeOp* op = new TreeOp(TREE_OP_FIND, key);
+      //TreeOp op(TREE_OP_FIND, key);
+      task_queue_.push(op);
+      task_nums++;
 
-      op.wait();
-      if (op.boolean_result_)
-        value = op.result_;
-      return op.boolean_result_;
+      // op.wait();
+      //if (op.boolean_result_)
+        //value = op.result_;
+      //return op.boolean_result_;
+      return true;
     }
 
     /**
      * @brief insert a k,v into the tree
      */
     void insert(const KeyType &key UNUSED, const ValueType &value UNUSED) {
-      TreeOp op(TREE_OP_INSERT, key, value);
-      task_queue_.push(&op);
+      TreeOp* op = new TreeOp(TREE_OP_INSERT, key, value);
+      // TreeOp op(TREE_OP_INSERT, key, value);
+      task_queue_.push(op);
+      task_nums++;
 
-      op.wait();
+      //op.wait();
     }
 
     /**
      * @brief remove a k,v from the tree
      */
     void remove(const KeyType &key UNUSED) {
-      TreeOp op(TREE_OP_REMOVE, key);
-      task_queue_.push(&op);
+      TreeOp* op = new TreeOp(TREE_OP_REMOVE, key);
+      task_queue_.push(op);
 
-      op.wait();
+      op->wait();
     }
   }; // End of PalmTree
   // Explicit template initialization
