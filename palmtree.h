@@ -52,7 +52,7 @@ namespace palmtree {
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 2;
+    static const int NUM_WORKER = 1;
     static const int BATCH_SIZE = 32 * NUM_WORKER;
 
   private:
@@ -884,8 +884,8 @@ namespace palmtree {
           return;
 
         // firstly sort the batch
-        std::sort(current_batch_.begin(), current_batch_.end(), [this](const TreeOp *op1, const TreeOp *op2) {
-            return key_less(op1->key_, op2->key_);
+        std::sort(palmtree_->current_batch_.begin(), palmtree_->current_batch_.end(), [this](const TreeOp *op1, const TreeOp *op2) {
+            return palmtree_->key_less(op1->key_, op2->key_);
         });
         // Partition the task among threads
         int batch_size = palmtree_->current_batch_.size();
@@ -943,7 +943,7 @@ namespace palmtree {
           }
         }
 
-        LOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution";
+        DLOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution";
       }
 
       /**
