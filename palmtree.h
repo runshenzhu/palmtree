@@ -1189,8 +1189,9 @@ namespace palmtree {
               for (auto op : wthread.current_tasks_) {
                 op->done_ = true;
                 if (op->op_type_ == TREE_OP_FIND) {
-                  if(op->boolean_result_ == false) {
+                  if(op->boolean_result_ == false || op->key_ != op->result_) {
                     cout << "find " << op->key_ << " fail"<<endl;
+                    cout << "key " << op->key_ << " result " << op->result_ << endl;
                   }
                 }
                 delete op;
