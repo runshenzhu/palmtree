@@ -49,7 +49,7 @@ namespace palmtree {
     // Max number of slots per leaf node
     static const int LEAF_MAX_SLOT = 1024;
 
-    static const int MAX_SLOT = 512;
+    static const int MAX_SLOT = 32;
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
@@ -922,7 +922,7 @@ namespace palmtree {
           if (result.find(op->target_node_) == result.end()) {
             result.emplace(op->target_node_, std::vector<TreeOp *>());
           }
-          
+
           result[op->target_node_].push_back(op);
         }
 
@@ -1187,9 +1187,13 @@ namespace palmtree {
             for (auto &wthread : palmtree_->workers_) {
 
               for (auto op : wthread.current_tasks_) {
-               op->done_ = true;
-                // delete op;
-                // delete op;
+                op->done_ = true;
+                if (op->op_type_ == TREE_OP_FIND) {
+                  if(op->boolean_result_ == false) {
+                    cout << "find " << op->key_ << " fail"<<endl;
+                  }
+                }
+                delete op;
                 palmtree_->task_nums--;
               }
 
