@@ -44,7 +44,7 @@ private:
     }
 
     void lock() {
-      int my_ticket = next_ticket++;
+      auto my_ticket = next_ticket++;
       while(my_ticket != now_serving) ;
     }
 

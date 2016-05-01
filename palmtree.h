@@ -15,6 +15,7 @@
 #include <atomic>
 #include <glog/logging.h>
 #include "CycleTimer.h"
+#include "barrier.h"
 
 using std::cout;
 using std::endl;
@@ -827,6 +828,7 @@ namespace palmtree {
      * Palm algorithm among the threads.
      * ************************/
     boost::barrier barrier_;
+    // Barrier barrier_;
     boost::lockfree::queue<TreeOp *> task_queue_;
 
     // The current batch that is being processed
@@ -875,7 +877,7 @@ namespace palmtree {
           } else
             boost::this_thread::sleep_for(boost::chrono::milliseconds(10));
           sleep_time += 1;
-          if (sleep_time > 3000)
+          if (sleep_time > 128)
             break;
         }
 
@@ -1209,7 +1211,7 @@ namespace palmtree {
     std::atomic<int> task_nums;
     double start_time_;
 
-    PalmTree(KeyType min_key): tree_depth_(1), destroyed_(false), min_key_(min_key), barrier_{NUM_WORKER}, task_queue_{10240} {
+    PalmTree(KeyType min_key): tree_depth_(1), destroyed_(false), min_key_(min_key), barrier_(NUM_WORKER), task_queue_{10240} {
       init();
       start_time_ = CycleTimer::currentSeconds();
     }
