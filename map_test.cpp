@@ -6,7 +6,7 @@
 #include <map>
 #include "CycleTimer.h"
 
-#define TEST_SIZE 1024000
+#define TEST_SIZE 10240000
 
 int main() {
 

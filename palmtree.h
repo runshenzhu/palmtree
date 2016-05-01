@@ -432,7 +432,7 @@ namespace palmtree {
       }
 
       if (node->type() == INNERNODE) {
-        Node *child_node = *(Node **)(&node->values[idx]);
+        Node *child_node = reinterpret_cast<Node *>(&node->values[idx]);
         DLOG(INFO) << "Delete node " << child_node->id;
         free_recursive(child_node);
 

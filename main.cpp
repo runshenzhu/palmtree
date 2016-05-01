@@ -8,8 +8,9 @@
 #include <cstdlib>
 #include <glog/logging.h>
 #include <map>
+#include "CycleTimer.h"
 
-#define TEST_SIZE 1024000
+#define TEST_SIZE 10240000
 using namespace std;
 
 void test() {
@@ -85,20 +86,15 @@ void bench() {
 
   std::vector<std::thread> threads;
 
+  double start = CycleTimer::currentSeconds();
+
   for (int i = 0; i < 1; i++) {
     threads.push_back(std::thread([palmtreep, i, buff]() {
       for(int j = 0; j < TEST_SIZE; j++) {
         auto kv = buff[j];
-        // LOG(INFO) << "thread " << i << " turn " << j;
         int res;
         palmtreep->insert(kv, kv);
-        bool success = palmtreep->find(kv, res);
-
-        if (success) {
-          DLOG(INFO) << "Thread " << i << " get " << res;
-        } else {
-          CHECK(false) << "It should find something in round " << i;
-        }
+        palmtreep->find(kv, res);
       }
     }));
   }
@@ -111,6 +107,8 @@ void bench() {
   while(palmtree.task_nums > 0)
     ;
 
+  double end = CycleTimer::currentSeconds();
+  cout << "run for " << end-start << "s";
 }
 
 int main(int argc, char *argv[]) {
