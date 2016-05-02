@@ -53,7 +53,7 @@ namespace palmtree {
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 1;
+    static const int NUM_WORKER = 2;
     static const int BATCH_SIZE = 32 * NUM_WORKER;
 
   private:
@@ -315,6 +315,10 @@ namespace palmtree {
         CHECK(ptr->slot_used > 0) << "Search empty inner node";
         auto idx = this->search_inner(ptr->keys, ptr->slot_used, key);
         CHECK(idx != -1) << "search innerNode fail" << endl;
+        CHECK(key_less(ptr->keys[idx], key) || key_eq(ptr->keys[idx], key));
+        if(idx + 1 < ptr->slot_used) {
+          CHECK(key_less(key, ptr->keys[idx + 1]));
+        }
         Node *child = ptr->values[idx];
         if (child->type() == LEAFNODE) {
           return (LeafNode *)child;
@@ -396,11 +400,24 @@ namespace palmtree {
         return;
       }
 
+      if(node->slot_used == 0) {
+        node->keys[0] = key;
+        node->values[0] = value;
+        node->slot_used++;
+        return;
+      }
 
       // add item to inner node
       // ensure it's order
       DLOG(INFO) << "search inner begin";
       auto idx = search_inner(node->keys, node->slot_used, key);
+
+      CHECK(idx != -1) << "search innerNode fail" << key <<" " <<node->keys[0];
+      CHECK(key_less(node->keys[idx], key) || key_eq(node->keys[idx], key));
+      if(idx + 1 < node->slot_used) {
+        CHECK(key_less(key, node->keys[idx + 1])) << "search inner fail";
+      }
+
       DLOG(INFO) << "search inner end";
       auto k = key;
       auto v = value;
@@ -412,6 +429,10 @@ namespace palmtree {
       node->keys[node->slot_used] = k;
       node->values[node->slot_used] = v;
       node->slot_used++;
+
+      for(int i = 1; i < node->slot_used; i++) {
+        CHECK(key_less(node->keys[i - 1], node->keys[i])) << "prev " << node->keys[i - 1] << " next " << node->keys[i];
+      }
     }
 
 
@@ -827,8 +848,8 @@ namespace palmtree {
      * before collecting enough tasks, it will partition the work and start the
      * Palm algorithm among the threads.
      * ************************/
-    boost::barrier barrier_;
-    // Barrier barrier_;
+    // boost::barrier barrier_;
+    Barrier barrier_;
     boost::lockfree::queue<TreeOp *> task_queue_;
 
     // The current batch that is being processed
@@ -886,9 +907,11 @@ namespace palmtree {
           return;
 
         // firstly sort the batch
+        /*
         std::sort(palmtree_->current_batch_.begin(), palmtree_->current_batch_.end(), [this](const TreeOp *op1, const TreeOp *op2) {
             return palmtree_->key_less(op1->key_, op2->key_);
         });
+         */
         // Partition the task among threads
         int batch_size = palmtree_->current_batch_.size();
         int task_per_thread = batch_size / NUM_WORKER;
@@ -1004,7 +1027,7 @@ namespace palmtree {
                   op->result_ = changed_values[op->key_];
                   op->boolean_result_ = true;
                 } else {
-                  int idx = palmtree_->search_helper(leaf->keys, leaf->slot_used, op->key_);
+                  int idx = palmtree_->search_leaf(leaf->keys, leaf->slot_used, op->key_);
                   if (idx == -1 || !palmtree_->key_eq(leaf->keys[idx], op->key_)) {
                     // Not find
                     op->boolean_result_ = false;
@@ -1194,7 +1217,7 @@ namespace palmtree {
                     cout << "key " << op->key_ << " result " << op->result_ << endl;
                   }
                 }
-                delete op;
+                // delete op;
                 palmtree_->task_nums--;
               }
 
@@ -1300,7 +1323,7 @@ namespace palmtree {
       task_queue_.push(op);
       task_nums++;
 
-      //op.wait();
+      // op.wait();
     }
 
     /**
@@ -1310,7 +1333,7 @@ namespace palmtree {
       TreeOp* op = new TreeOp(TREE_OP_REMOVE, key);
       task_queue_.push(op);
 
-      op->wait();
+      // op->wait();
     }
   }; // End of PalmTree
   // Explicit template initialization
