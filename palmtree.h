@@ -53,8 +53,8 @@ namespace palmtree {
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 1;
-    static const int BATCH_SIZE = 32 * NUM_WORKER;
+    static const int NUM_WORKER = 12;
+    static const int BATCH_SIZE = 256 * NUM_WORKER;
 
   private:
     /**
@@ -827,8 +827,8 @@ namespace palmtree {
      * before collecting enough tasks, it will partition the work and start the
      * Palm algorithm among the threads.
      * ************************/
-    boost::barrier barrier_;
-    // Barrier barrier_;
+    // boost::barrier barrier_;
+    Barrier barrier_;
     boost::lockfree::queue<TreeOp *> task_queue_;
 
     // The current batch that is being processed
@@ -1248,13 +1248,13 @@ namespace palmtree {
     }
 
     ~PalmTree() {
-      LOG(INFO) << "Destroy palm tree " << task_nums;
+      DLOG(INFO) << "Destroy palm tree " << task_nums;
 
       while(task_nums != 0) ;
 
       double end_time = CycleTimer::currentSeconds();
       double runtime = end_time - start_time_;
-      LOG(INFO) << "Run for " << runtime << " seconds";
+      DLOG(INFO) << "Run for " << runtime << " seconds";
 
       destroyed_ = true;
       for (auto &wthread : workers_)
@@ -1306,6 +1306,12 @@ namespace palmtree {
       task_queue_.push(op);
 
       op->wait();
+    }
+
+    // Wait until all task finished
+    void wait_finish() {
+      while (task_nums != 0)
+        ;
     }
   }; // End of PalmTree
   // Explicit template initialization

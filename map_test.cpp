@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <iostream>
 #include <map>
+#include <algorithm>
+#include <cstdlib>
 #include "CycleTimer.h"
 
 #define TEST_SIZE 10240000
@@ -15,13 +17,14 @@ int main() {
     buff[i] = i;
   }
 
-  std::random_shuffle(buff, buff + TEST_SIZE);
+  //std::random_shuffle(buff, buff + TEST_SIZE);
 
   auto begin_time = CycleTimer::currentSeconds();
   std::map<int, int> t;
 
   for(int i = 0; i < TEST_SIZE; i++) {
-    auto kv = buff[i];
+    //auto kv = buff[i];
+    auto kv = i;
     t[kv] = kv;
     if (t[kv] != kv) {
       return 0;
