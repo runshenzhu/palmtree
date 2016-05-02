@@ -421,18 +421,19 @@ namespace palmtree {
       DLOG(INFO) << "search inner end";
       auto k = key;
       auto v = value;
-      for(int i = idx + 1; i < node->slot_used; i++) {
-        std::swap(node->keys[i], k);
-        std::swap(node->values[i], v);
-      }
+
+//      for(int i = idx + 1; i < node->slot_used; i++) {
+//        std::swap(node->keys[i], k);
+//        std::swap(node->values[i], v);
+//      }
 
       node->keys[node->slot_used] = k;
       node->values[node->slot_used] = v;
       node->slot_used++;
 
-      for(int i = 1; i < node->slot_used; i++) {
-        CHECK(key_less(node->keys[i - 1], node->keys[i])) << "prev " << node->keys[i - 1] << " next " << node->keys[i];
-      }
+//      for(int i = 1; i < node->slot_used; i++) {
+//        CHECK(key_less(node->keys[i - 1], node->keys[i])) << "prev " << node->keys[i - 1] << " next " << node->keys[i];
+//      }
     }
 
 
