@@ -53,8 +53,8 @@ namespace palmtree {
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 2;
-    static const int BATCH_SIZE = 32 * NUM_WORKER;
+    static const int NUM_WORKER = 12;
+    static const int BATCH_SIZE = 256 * NUM_WORKER;
 
   private:
     /**
@@ -454,7 +454,7 @@ namespace palmtree {
       }
 
       if (node->type() == INNERNODE) {
-        Node *child_node = *(Node **)(&node->values[idx]);
+        Node *child_node = reinterpret_cast<Node *>(&node->values[idx]);
         DLOG(INFO) << "Delete node " << child_node->id;
         free_recursive(child_node);
 
@@ -1277,13 +1277,13 @@ namespace palmtree {
     }
 
     ~PalmTree() {
-      LOG(INFO) << "Destroy palm tree " << task_nums;
+      DLOG(INFO) << "Destroy palm tree " << task_nums;
 
       while(task_nums != 0) ;
 
       double end_time = CycleTimer::currentSeconds();
       double runtime = end_time - start_time_;
-      LOG(INFO) << "Run for " << runtime << " seconds";
+      DLOG(INFO) << "Run for " << runtime << " seconds";
 
       destroyed_ = true;
       for (auto &wthread : workers_)
@@ -1335,6 +1335,12 @@ namespace palmtree {
       task_queue_.push(op);
 
       // op->wait();
+    }
+
+    // Wait until all task finished
+    void wait_finish() {
+      while (task_nums != 0)
+        ;
     }
   }; // End of PalmTree
   // Explicit template initialization

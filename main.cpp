@@ -8,9 +8,65 @@
 #include <cstdlib>
 #include <glog/logging.h>
 #include <map>
+#include <time.h>
+#include "CycleTimer.h"
 
-#define TEST_SIZE 1024000
+#define TEST_SIZE 10240000
 using namespace std;
+
+class fast_random {
+ public:
+  fast_random(unsigned long seed) : seed(0) { set_seed0(seed); }
+
+  inline unsigned long next() {
+    return ((unsigned long)next(32) << 32) + next(32);
+  }
+
+  inline uint32_t next_u32() { return next(32); }
+
+  inline uint16_t next_u16() { return (uint16_t)next(16); }
+
+  /** [0.0, 1.0) */
+  inline double next_uniform() {
+    return (((unsigned long)next(26) << 27) + next(27)) / (double)(1L << 53);
+  }
+
+  inline char next_char() { return next(8) % 256; }
+
+  inline char next_readable_char() {
+    static const char readables[] =
+        "0123456789@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+    return readables[next(6)];
+  }
+
+  inline std::string next_string(size_t len) {
+    std::string s(len, 0);
+    for (size_t i = 0; i < len; i++) s[i] = next_char();
+    return s;
+  }
+
+  inline std::string next_readable_string(size_t len) {
+    std::string s(len, 0);
+    for (size_t i = 0; i < len; i++) s[i] = next_readable_char();
+    return s;
+  }
+
+  inline unsigned long get_seed() { return seed; }
+
+  inline void set_seed(unsigned long seed) { this->seed = seed; }
+
+ private:
+  inline void set_seed0(unsigned long seed) {
+    this->seed = (seed ^ 0x5DEECE66DL) & ((1L << 48) - 1);
+  }
+
+  inline unsigned long next(unsigned int bits) {
+    seed = (seed * 0x5DEECE66DL + 0xBL) & ((1L << 48) - 1);
+    return (unsigned long)(seed >> (48 - bits));
+  }
+
+  unsigned long seed;
+};
 
 void test() {
   palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min());
@@ -85,20 +141,15 @@ void bench() {
 
   std::vector<std::thread> threads;
 
+  double start = CycleTimer::currentSeconds();
+
   for (int i = 0; i < 1; i++) {
     threads.push_back(std::thread([palmtreep, i, buff]() {
       for(int j = 0; j < TEST_SIZE; j++) {
         auto kv = buff[j];
-        // LOG(INFO) << "thread " << i << " turn " << j;
         int res;
         palmtreep->insert(kv, kv);
-        bool success = palmtreep->find(kv, res);
-
-        if (success) {
-          DLOG(INFO) << "Thread " << i << " get " << res;
-        } else {
-          CHECK(false) << "It should find something in round " << i;
-        }
+        palmtreep->find(kv, res);
       }
     }));
   }
@@ -111,15 +162,82 @@ void bench() {
   while(palmtree.task_nums > 0)
     ;
 
+  double end = CycleTimer::currentSeconds();
+  cout << "run for " << end-start << "s";
+}
+
+// Populate a palm tree with @entry_count entries
+void populate_palm_tree(palmtree::PalmTree<int, int> *palmtreep, size_t entry_count) {
+  int *buff = new int[entry_count];
+  for(size_t i = 0; i < entry_count; i++) {
+    buff[i] = i;
+  }
+
+  std::random_shuffle(buff, buff + entry_count);
+
+  for(size_t j = 0; j < entry_count; j++) {
+    auto kv = buff[j];
+    int res;
+    palmtreep->insert(kv, kv);
+    palmtreep->find(kv, res);
+  }
+
+  delete buff;
+
+  // Wait for task finished
+  palmtreep->wait_finish();
+}
+
+
+// Run readonly benchmark with @entry_count number of entries, and @read_count
+// of read operations
+void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = false) {
+  palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min());
+  palmtree::PalmTree<int, int> *palmtreep = &palmtree;
+
+  populate_palm_tree(palmtreep, entry_count);
+
+  // Wait for insertion finished
+  LOG(INFO) << entry_count << " entries inserted";
+
+  fast_random rng(time(0));
+
+  double start = CycleTimer::currentSeconds();
+  LOG(INFO) << "Benchmark started";
+
+  for (size_t i = 0; i < read_count; i++) {
+    int res;
+    int rand_key = rng.next_u32() % entry_count;
+    palmtreep->find(rand_key, res);    
+  }
+
+  double end = CycleTimer::currentSeconds();
+  palmtreep->wait_finish();
+  LOG(INFO) << "Palmtree run for " << end-start << "s";
+
+
+  if (run_std_map) {
+    LOG(INFO) << "Running std map";
+    std::map<int, int> map;
+    for (size_t i = 0; i < entry_count; i++)
+      map.insert(std::make_pair(i, i));
+
+    start = CycleTimer::currentSeconds();
+    for (size_t i = 0; i < read_count; i++) {
+      int rand_key = rng.next_u32() % entry_count;
+      map.find(rand_key);
+    }
+    end = CycleTimer::currentSeconds();
+    LOG(INFO) << "std::map run for " << end-start << "s";
+  }
 }
 
 int main(int argc, char *argv[]) {
   // Google logging
   FLAGS_logtostderr = 1;
   google::InitGoogleLogging(argv[0]);
-  DLOG(INFO) << "hello world";
 
-  bench();
+  readonly_bench(512*1024, 1024*1024*10, true);
 
   return 0;
 }
