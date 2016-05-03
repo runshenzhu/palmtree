@@ -211,8 +211,8 @@ void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = fa
     palmtreep->find(rand_key, res);    
   }
 
-  double end = CycleTimer::currentSeconds();
   palmtreep->wait_finish();
+  double end = CycleTimer::currentSeconds();
   LOG(INFO) << "Palmtree run for " << end-start << "s";
 
 

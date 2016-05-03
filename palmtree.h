@@ -47,9 +47,7 @@ namespace palmtree {
     // Max number of slots per inner node
     static const int INNER_MAX_SLOT = 256;
     // Max number of slots per leaf node
-    static const int LEAF_MAX_SLOT = 1024;
-
-    static const int MAX_SLOT = 32;
+    static const int LEAF_MAX_SLOT = 64;
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
@@ -85,9 +83,9 @@ namespace palmtree {
       InnerNode(Node *parent, int level): Node(parent, level){};
       virtual ~InnerNode() {};
       // Keys for values
-      KeyType keys[MAX_SLOT];
+      KeyType keys[LEAF_MAX_SLOT];
       // Pointers for child nodes
-      Node *values[MAX_SLOT];
+      Node *values[LEAF_MAX_SLOT];
 
       virtual NodeType type() const {
         return INNERNODE;
@@ -104,11 +102,16 @@ namespace palmtree {
       }
 
       inline bool is_full() const {
-        return Node::slot_used == MAX_SLOT;
+        return Node::slot_used == MAX_SLOT();
+      }
+
+
+      inline size_t MAX_SLOT() const {
+        return LEAF_MAX_SLOT;
       }
 
       virtual inline bool is_few() {
-        return Node::slot_used < MAX_SLOT/4 || Node::slot_used == 0;
+        return Node::slot_used < MAX_SLOT()/4 || Node::slot_used == 0;
       }
 
     };
@@ -119,8 +122,8 @@ namespace palmtree {
       virtual ~LeafNode() {};
 
       // Keys and values for leaf node
-      KeyType keys[MAX_SLOT];
-      ValueType values[MAX_SLOT];
+      KeyType keys[INNER_MAX_SLOT];
+      ValueType values[INNER_MAX_SLOT];
       //LeafNode *prev;
       //LeafNode *next;
 
@@ -132,18 +135,6 @@ namespace palmtree {
         std::string res;
         res += "LeafNode[" + std::to_string(Node::id) + " @ " + std::to_string(Node::level) + "] ";
 
-//        if (Node::prev != nullptr)
-//          res += "left: " + std::to_string(Node::prev->id);
-//        else
-//          res += "left: null";
-//        res += " ";
-//        if (Node::next != nullptr)
-//          res += "right: " + std::to_string(Node::next->id);
-//        else
-//          res += "right: null";
-//        res += " ";
-
-        // res += std::to_string(Node::slot_used);
         for (int i = 0 ; i < Node::slot_used ; i++) {
           res += " " + std::to_string(keys[i]) + ":" + std::to_string(values[i]);
         }
@@ -151,11 +142,15 @@ namespace palmtree {
       }
 
       inline bool is_full() const {
-        return Node::slot_used == MAX_SLOT;
+        return Node::slot_used == MAX_SLOT();
+      }
+
+      inline size_t MAX_SLOT() const {
+        return INNER_MAX_SLOT;
       }
 
       virtual inline bool is_few() {
-        return Node::slot_used < MAX_SLOT/4 || Node::slot_used == 0;
+        return Node::slot_used < MAX_SLOT()/4 || Node::slot_used == 0;
       }
     };
     /**
@@ -430,10 +425,6 @@ namespace palmtree {
       node->keys[node->slot_used] = k;
       node->values[node->slot_used] = v;
       node->slot_used++;
-
-//      for(int i = 1; i < node->slot_used; i++) {
-//        CHECK(key_less(node->keys[i - 1], node->keys[i])) << "prev " << node->keys[i - 1] << " next " << node->keys[i];
-//      }
     }
 
 
@@ -551,7 +542,7 @@ namespace palmtree {
       }
 
       DLOG(INFO) << "Result node size " << num;
-      if (num >= MAX_SLOT) {
+      if (num >= node->MAX_SLOT()) {
         DLOG(INFO) << "Going to split";
         auto comp = [this](const std::pair<KeyType, ValueType> &p1, const std::pair<KeyType, ValueType> &p2) {
           return key_less(p1.first, p2.first);
@@ -613,13 +604,6 @@ namespace palmtree {
         collect_leaf(node, ret.orphaned_kv);
         ret.node_items.push_back(std::make_pair(node_key, node));
         ret.type_ = MOD_TYPE_DEC;
-
-//        if (node->prev != nullptr) {
-//          node->prev->next = node->next;
-//        }
-//        if (node->next != nullptr) {
-//          node->next->prev = node->prev;
-//        }
       }
 
       return ret;
@@ -648,7 +632,7 @@ namespace palmtree {
         }
       }
 
-      if (num >= MAX_SLOT) {
+      if (num >= node->MAX_SLOT()) {
         DLOG(INFO) << "inner will split";
         auto comp = [this](const std::pair<KeyType, Node *> &p1, const std::pair<KeyType, Node *> &p2) {
           return key_less(p1.first, p2.first);
@@ -749,14 +733,6 @@ namespace palmtree {
 
       // swap idx with slot 0
 
-      /*
-      auto tmp_key = node->keys[0];
-      auto tmp_val = node->values[0];
-      node->keys[0] = node->keys[idx];
-      node->values[0] = node->values[idx];
-      node->keys[idx] = tmp_key;
-      node->values[idx] = tmp_val;
-       */
       std::swap(node->keys[0], node->keys[idx]);
       std::swap(node->values[0], node->values[idx]);
 
@@ -792,13 +768,6 @@ namespace palmtree {
         space += " ";
       DLOG(INFO) << space << node->to_string() << " | Layer size " << layer_width_[node->level]->load();;
 
-//      if(node->type() == LEAFNODE) {
-//        auto leaf_node = (LeafNode *)node;
-//        if (leaf_node->prev != nullptr)
-//          CHECK(leaf_node->prev->next == leaf_node) << "Left brother dosen't point to me";
-//        if (leaf_node->next != nullptr)
-//          CHECK(leaf_node->next->prev == node) << "Right brother dosen't point to me";
-//      }
       if (node->type() == INNERNODE) {
         InnerNode *inode = (InnerNode *)node;
         for (int i = 0; i < inode->slot_used; i++) {
