@@ -124,8 +124,6 @@ namespace palmtree {
       // Keys and values for leaf node
       KeyType keys[INNER_MAX_SLOT];
       ValueType values[INNER_MAX_SLOT];
-      //LeafNode *prev;
-      //LeafNode *next;
 
       virtual NodeType type() const {
         return LEAFNODE;

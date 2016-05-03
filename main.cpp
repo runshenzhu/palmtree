@@ -9,6 +9,7 @@
 #include <glog/logging.h>
 #include <map>
 #include <time.h>
+#include <unistd.h>
 #include "CycleTimer.h"
 
 #define TEST_SIZE 10240000
@@ -213,7 +214,7 @@ void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = fa
 
   palmtreep->wait_finish();
   double end = CycleTimer::currentSeconds();
-  LOG(INFO) << "Palmtree run for " << end-start << "s";
+  LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput:" << std::fixed << read_count/(end-start)/1000 << " K rps";
 
 
   if (run_std_map) {
@@ -228,7 +229,7 @@ void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = fa
       map.find(rand_key);
     }
     end = CycleTimer::currentSeconds();
-    LOG(INFO) << "std::map run for " << end-start << "s";
+    LOG(INFO) << "std::map run for " << end-start << "s, " << "thput:" << std::fixed << read_count/(end-start)/1000 << " K rps";
   }
 }
 
