@@ -45,13 +45,13 @@ namespace palmtree {
            typename KeyComparator = std::less<KeyType> >
   class PalmTree {
     // Max number of slots per inner node
-    static const int INNER_MAX_SLOT = 256;
+    static const int INNER_MAX_SLOT = 12;
     // Max number of slots per leaf node
-    static const int LEAF_MAX_SLOT = 64;
+    static const int LEAF_MAX_SLOT = 12;
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 12;
+    static const int NUM_WORKER = 1;
     static const int BATCH_SIZE = 256 * NUM_WORKER;
 
   private:
@@ -337,12 +337,13 @@ namespace palmtree {
         return key_less(p1.first, p2.first);
       });
 
-      int half_size = (int) input.size() / 2 + 1;
       auto itr = input.begin();
 
+      auto item_per_node = node->MAX_SLOT() / 2;
+      auto node_num = input.size() / (item_per_node);
       // save first half items (small part) in old node
       node->slot_used = 0;
-      for (int i = 0; i < half_size; i++) {
+      for (int i = 0; i < item_per_node; i++) {
         // add_item<NodeType, V>(node, itr->first, itr->second);
         node->keys[i] = itr->first;
         node->values[i] = itr->second;
@@ -351,21 +352,36 @@ namespace palmtree {
       }
 
       // Add a new node
-      NodeType* new_node = new NodeType(node->parent, node->Node::level);
-      layer_width_[node->Node::level]->fetch_add(1);
+      int node_create_num = 1;
+      while(node_create_num < node_num) {
 
-      // save the second-half in new node
-      auto new_key = (*itr).first;
-      int i = 0;
-      while(itr != input.end()){
-        // add_item<NodeType, V>(new_node, itr->first, itr->second);
-        new_node->keys[i] = itr->first;
-        new_node->values[i] = itr->second;
-        new_node->slot_used++;
-        itr++;
-        i++;
+        NodeType *new_node = new NodeType(node->parent, node->Node::level);
+        layer_width_[node->Node::level]->fetch_add(1);
+
+        // save the second-half in new node
+        auto new_key = (*itr).first;
+        int i = 0;
+        while (itr != input.end() && new_node->slot_used < item_per_node) {
+          // add_item<NodeType, V>(new_node, itr->first, itr->second);
+          new_node->keys[i] = itr->first;
+          new_node->values[i] = itr->second;
+          new_node->slot_used++;
+          itr++;
+          i++;
+        }
+        if(node_create_num == node_num - 1) {
+          while(itr != input.end()) {
+            new_node->keys[i] = itr->first;
+            new_node->values[i] = itr->second;
+            new_node->slot_used++;
+            itr++;
+            i++;
+          }
+        }
+
+        new_nodes.push_back(std::make_pair(new_key, new_node));
+        node_create_num++;
       }
-      new_nodes.push_back(std::make_pair(new_key, new_node));
     }
 
     // Warning: if this function return true, the width of the layer will be
@@ -542,7 +558,7 @@ namespace palmtree {
       }
 
       DLOG(INFO) << "Result node size " << num;
-      if (num >= node->MAX_SLOT()) {
+      if (num > node->MAX_SLOT()) {
         DLOG(INFO) << "Going to split";
         auto comp = [this](const std::pair<KeyType, ValueType> &p1, const std::pair<KeyType, ValueType> &p2) {
           return key_less(p1.first, p2.first);
@@ -632,7 +648,7 @@ namespace palmtree {
         }
       }
 
-      if (num >= node->MAX_SLOT()) {
+      if (num > node->MAX_SLOT()) {
         DLOG(INFO) << "inner will split";
         auto comp = [this](const std::pair<KeyType, Node *> &p1, const std::pair<KeyType, Node *> &p2) {
           return key_less(p1.first, p2.first);
@@ -652,7 +668,9 @@ namespace palmtree {
                 buf.erase(kv);
                 // TODO: memleak
               }else{
+                cout << "del " << kv.first<<endl;
                 del_item<InnerNode>(node, kv.first);
+
               }
             }
           }
