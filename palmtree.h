@@ -422,10 +422,10 @@ namespace palmtree {
       auto k = key;
       auto v = value;
 
-//      for(int i = idx + 1; i < node->slot_used; i++) {
-//        std::swap(node->keys[i], k);
-//        std::swap(node->values[i], v);
-//      }
+      for(int i = idx + 1; i < node->slot_used; i++) {
+        std::swap(node->keys[i], k);
+        std::swap(node->values[i], v);
+      }
 
       node->keys[node->slot_used] = k;
       node->values[node->slot_used] = v;
@@ -1218,7 +1218,7 @@ namespace palmtree {
                     cout << "key " << op->key_ << " result " << op->result_ << endl;
                   }
                 }
-                // delete op;
+                delete op;
                 palmtree_->task_nums--;
               }
 
