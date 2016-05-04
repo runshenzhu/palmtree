@@ -51,7 +51,7 @@ namespace palmtree {
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 1;
+    static const int NUM_WORKER = 2;
     static const int BATCH_SIZE = 1024 * NUM_WORKER;
 
   private:
