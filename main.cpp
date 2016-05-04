@@ -178,9 +178,7 @@ void populate_palm_tree(palmtree::PalmTree<int, int> *palmtreep, size_t entry_co
 
   for(size_t j = 0; j < entry_count; j++) {
     auto kv = buff[j];
-    int res;
     palmtreep->insert(kv, kv);
-    palmtreep->find(kv, res);
   }
 
   delete buff;
@@ -193,6 +191,7 @@ void populate_palm_tree(palmtree::PalmTree<int, int> *palmtreep, size_t entry_co
 // Run readonly benchmark with @entry_count number of entries, and @read_count
 // of read operations
 void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = false) {
+  LOG(INFO) << "Begin palmtree read only benchmark";
   palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min());
   palmtree::PalmTree<int, int> *palmtreep = &palmtree;
 
@@ -214,7 +213,7 @@ void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = fa
 
   palmtreep->wait_finish();
   double end = CycleTimer::currentSeconds();
-  LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput:" << std::fixed << read_count/(end-start)/1000 << " K rps";
+  LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << read_count/(end-start)/1000 << " K rps";
 
 
   if (run_std_map) {

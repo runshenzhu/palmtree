@@ -5,7 +5,7 @@ CC=g++
 
 all: palmtree_test
 
-palmtree_test: main.cpp palmtree.h
+palmtree_test: main.cpp palmtree.h barrier.h
 	$(CC) $(CFLAGS) -o palmtree_test main.cpp $(LDFLAGS)
 
 map_test: map_test.cpp

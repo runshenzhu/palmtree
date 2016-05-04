@@ -45,14 +45,14 @@ namespace palmtree {
            typename KeyComparator = std::less<KeyType> >
   class PalmTree {
     // Max number of slots per inner node
-    static const int INNER_MAX_SLOT = 12;
+    static const int INNER_MAX_SLOT = 256;
     // Max number of slots per leaf node
-    static const int LEAF_MAX_SLOT = 12;
+    static const int LEAF_MAX_SLOT = 64;
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 1;
-    static const int BATCH_SIZE = 256 * NUM_WORKER;
+    static const int NUM_WORKER = 8;
+    static const int BATCH_SIZE = 1024 * NUM_WORKER;
 
   private:
     /**
@@ -881,9 +881,10 @@ namespace palmtree {
           bool res = palmtree_->task_queue_.pop(op);
           if (res) {
             palmtree_->current_batch_.push_back(op);
-          } else
+          } else {
             boost::this_thread::sleep_for(boost::chrono::milliseconds(10));
-          sleep_time += 1;
+            sleep_time += 1;
+          }
           if (sleep_time > 128)
             break;
         }
@@ -893,11 +894,10 @@ namespace palmtree {
           return;
 
         // firstly sort the batch
-        /*
         std::sort(palmtree_->current_batch_.begin(), palmtree_->current_batch_.end(), [this](const TreeOp *op1, const TreeOp *op2) {
             return palmtree_->key_less(op1->key_, op2->key_);
         });
-         */
+         
         // Partition the task among threads
         int batch_size = palmtree_->current_batch_.size();
         int task_per_thread = batch_size / NUM_WORKER;
@@ -955,6 +955,15 @@ namespace palmtree {
         }
 
         DLOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution";
+
+
+        // Calculate number of tasks
+        int sum = 0;
+        for (auto itr = result.begin(); itr != result.end(); itr++) {
+          sum += itr->second.size();
+        }
+
+        // LOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution, " << sum << " tasks in total";
       }
 
       /**
