@@ -7,7 +7,7 @@
 #include <chrono>
 #include <assert.h>
 #include <thread>
-#include <boost/lockfree/queue.hpp>
+#include <boost/lockfree/spsc_queue.hpp>
 #include <boost/thread/barrier.hpp>
 #include <boost/thread.hpp>
 #include <iostream>
@@ -47,11 +47,11 @@ namespace palmtree {
     // Max number of slots per inner node
     static const int INNER_MAX_SLOT = 256;
     // Max number of slots per leaf node
-    static const int LEAF_MAX_SLOT = 64;
+    static const int LEAF_MAX_SLOT = 128;
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 8;
+    static const int NUM_WORKER = 1;
     static const int BATCH_SIZE = 1024 * NUM_WORKER;
 
   private:
@@ -230,6 +230,18 @@ namespace palmtree {
     KeyType min_key_;
     // Key comparator
     KeyComparator kcmp;
+    // Current batch of the tree
+    std::vector<TreeOp *> tree_current_batch_;
+
+    void push_batch(TreeOp *op) {
+      tree_current_batch_.push_back(op);
+      task_nums++;
+      if (tree_current_batch_.size() >= BATCH_SIZE) {
+        task_batch_queue_.push(tree_current_batch_);
+        tree_current_batch_.clear();
+        DLOG(INFO) << "Push one batch into the queue";
+      }
+    }
 
     // Return true if k1 < k2
     inline bool key_less(const KeyType &k1, const KeyType &k2) {
@@ -836,7 +848,7 @@ namespace palmtree {
      * ************************/
     // boost::barrier barrier_;
     Barrier barrier_;
-    boost::lockfree::queue<TreeOp *> task_queue_;
+    boost::lockfree::spsc_queue<std::vector<TreeOp *>> task_batch_queue_;
 
     // The current batch that is being processed
     std::vector<TreeOp *> current_batch_;
@@ -876,17 +888,16 @@ namespace palmtree {
         palmtree_->current_batch_.clear();
 
         int sleep_time = 0;
-        while (palmtree_->current_batch_.size() != BATCH_SIZE) {
-          TreeOp *op = nullptr;
-          bool res = palmtree_->task_queue_.pop(op);
+        while (sleep_time < 128) {
+
+          bool res = palmtree_->task_batch_queue_.pop(palmtree_->current_batch_);
           if (res) {
-            palmtree_->current_batch_.push_back(op);
-          } else {
-            boost::this_thread::sleep_for(boost::chrono::milliseconds(10));
-            sleep_time += 1;
-          }
-          if (sleep_time > 128)
             break;
+          } else {
+            sleep_time ++;
+            if (sleep_time % 10 == 0)
+              boost::this_thread::sleep_for(boost::chrono::milliseconds(10));
+          }
         }
 
         DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_.size();
@@ -1234,7 +1245,7 @@ namespace palmtree {
     std::atomic<int> task_nums;
     double start_time_;
 
-    PalmTree(KeyType min_key): tree_depth_(1), destroyed_(false), min_key_(min_key), barrier_(NUM_WORKER), task_queue_{10240} {
+    PalmTree(KeyType min_key): tree_depth_(1), destroyed_(false), min_key_(min_key), barrier_(NUM_WORKER), task_batch_queue_{1024*500} {
       init();
       start_time_ = CycleTimer::currentSeconds();
     }
@@ -1299,8 +1310,8 @@ namespace palmtree {
     bool find(const KeyType &key UNUSED, ValueType &value UNUSED) {
       TreeOp* op = new TreeOp(TREE_OP_FIND, key);
       //TreeOp op(TREE_OP_FIND, key);
-      task_queue_.push(op);
-      task_nums++;
+
+      push_batch(op);
 
       // op.wait();
       //if (op.boolean_result_)
@@ -1315,8 +1326,8 @@ namespace palmtree {
     void insert(const KeyType &key UNUSED, const ValueType &value UNUSED) {
       TreeOp* op = new TreeOp(TREE_OP_INSERT, key, value);
       // TreeOp op(TREE_OP_INSERT, key, value);
-      task_queue_.push(op);
-      task_nums++;
+
+      push_batch(op);
 
       // op.wait();
     }
@@ -1326,13 +1337,18 @@ namespace palmtree {
      */
     void remove(const KeyType &key UNUSED) {
       TreeOp* op = new TreeOp(TREE_OP_REMOVE, key);
-      task_queue_.push(op);
+
+      push_batch(op);
 
       // op->wait();
     }
 
     // Wait until all task finished
     void wait_finish() {
+      if (tree_current_batch_.size() != 0) {
+        task_batch_queue_.push(tree_current_batch_);
+        tree_current_batch_.clear();
+      }
       while (task_nums != 0)
         ;
     }
