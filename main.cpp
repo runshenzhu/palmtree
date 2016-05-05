@@ -261,7 +261,7 @@ int main(int argc, char *argv[]) {
   }
 
 
-  readonly_bench(1024*512*10, 1024*1024*10, c);
+  readonly_bench(1024*512*1, 1024*1024*10, c);
 
   return 0;
 }
