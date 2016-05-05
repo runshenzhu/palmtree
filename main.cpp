@@ -240,7 +240,7 @@ int main(int argc, char *argv[]) {
   FLAGS_logtostderr = 1;
   google::InitGoogleLogging(argv[0]);
 
-  readonly_bench(1024*512*10, 1024*1024*10, true);
+  readonly_bench(1024*512, 1024*1024*10, true);
 
   return 0;
 }

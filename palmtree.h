@@ -38,6 +38,47 @@ namespace palmtree {
     LEAFNODE
   };
 
+  class Stats {
+  public:
+    Stats(int worker_num): worker_num_(worker_num) {}
+    Stats() {}
+    /**
+     * add stat for one metric of one worker
+     */
+    void add_stat(int worker_id, std::string metric_name, double metric_value) {
+      stats_[metric_name][worker_id] += metric_value;
+    }
+
+    void init_metric(std::string metric_name) {
+      stats_[metric_name] = std::vector<CycleTimer::SysClock>(worker_num_);
+      for (int i = 0; i < worker_num_; i++)
+        stats_[metric_name][i] = 0;
+    }
+
+    /**
+     * Print the stats out
+     */
+    void print_stat() {
+      for (auto itr = stats_.begin(); itr != stats_.end(); itr++) {
+        LOG(INFO) << "[" << itr->first << "] ";
+        for (int i = 0; i < worker_num_; i++) {
+          LOG(INFO) << i << ": " << itr->second[i] * CycleTimer::secondsPerTick();
+        }
+      }
+    }
+
+    void reset_metric() {
+      for (auto itr = stats_.begin(); itr != stats_.end(); itr++) {
+        for (int i = 0; i < worker_num_; i++) {
+          itr->second[i] = 0;
+        }
+      }
+    }
+  private:
+    std::unordered_map<std::string, std::vector<CycleTimer::SysClock>> stats_;
+    int worker_num_;
+  } STAT;
+
 
   template <typename KeyType,
            typename ValueType,
@@ -853,8 +894,11 @@ namespace palmtree {
     // The current batch that is being processed
     std::vector<TreeOp *> current_batch_;
 
-    void sync() {
+    void sync(int worker_id) {
+      auto begin_tick = CycleTimer::currentTicks();
       barrier_.wait();
+      auto passed_tick = CycleTimer::currentTicks() - begin_tick;
+      STAT.add_stat(worker_id, "sync_time", passed_tick);
     }
 
     struct WorkerThread {
@@ -1126,6 +1170,7 @@ namespace palmtree {
       void worker_loop() {
         while (!done_) {
           // Stage 0, collect work batch and partition
+          CycleTimer::SysClock start_tick = CycleTimer::currentTicks();
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 0: collect tasks";
           if (worker_id_ == 0) {
             collect_batch();
@@ -1135,7 +1180,7 @@ namespace palmtree {
                 palmtree_->workers_[i].done_ = true;
             };
           }
-          palmtree_->sync();
+          palmtree_->sync(worker_id_);
           if (done_)
             DLOG(INFO) << "Worker " << worker_id_ << " exit";
 
@@ -1148,7 +1193,7 @@ namespace palmtree {
             CHECK(op->target_node_ != nullptr) << "search returns nullptr";
           }
           asm volatile("": : :"memory");
-          palmtree_->sync();
+          palmtree_->sync(worker_id_);
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 1 finished";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 2: Process leaves";
           // Stage 2, redistribute work, read the tree then modify, each thread
@@ -1180,7 +1225,7 @@ namespace palmtree {
             }
             upper_mods[node->parent].push_back(upper_mod);
           }
-          palmtree_->sync();
+          palmtree_->sync(worker_id_);
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 2 finished";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 3: propagate tree modification";
           // Stage 3, propagate tree modifications back
@@ -1201,11 +1246,11 @@ namespace palmtree {
               }
               upper_mods[node->parent].push_back(mod_res);
             }
-            palmtree_->sync();
+            palmtree_->sync(worker_id_);
             // DLOG_IF(INFO, worker_id_ == 0) << "Layer #" << layer << " done";
           } // End propagate
 
-          palmtree_->sync();
+          palmtree_->sync(worker_id_);
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 3 finished";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4: Handle root";
           // Stage 4, modify the root, re-insert orphaned, mark work as done
@@ -1232,6 +1277,10 @@ namespace palmtree {
             // palmtree_->ensure_tree_structure(palmtree_->tree_root, 0);
           }
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4 finished";
+
+          CycleTimer::SysClock end_tick = CycleTimer::currentTicks();
+
+          STAT.add_stat(worker_id_, "round_time", end_tick-start_tick);
         } // End worker loop
         DLOG(INFO) << "Worker " << worker_id_ << " exited";
       }
@@ -1243,11 +1292,15 @@ namespace palmtree {
      * ********************/
   public:
     std::atomic<int> task_nums;
-    double start_time_;
 
-    PalmTree(KeyType min_key): tree_depth_(1), destroyed_(false), min_key_(min_key), barrier_(NUM_WORKER), task_batch_queue_{1024*500} {
+    PalmTree(KeyType min_key): 
+      tree_depth_(1), 
+      destroyed_(false), 
+      min_key_(min_key), 
+      barrier_(NUM_WORKER), 
+      task_batch_queue_{1024*500}
+    {
       init();
-      start_time_ = CycleTimer::currentSeconds();
     }
 
     void init() {
@@ -1257,6 +1310,11 @@ namespace palmtree {
       // Init layer width
       layer_width_.push_back(new std::atomic<int>(1));
       layer_width_.push_back(new std::atomic<int>(1));
+
+      STAT = Stats(NUM_WORKER);
+      STAT.init_metric("sync_time");
+      STAT.init_metric("round_time");
+
       // Init the worker thread
       for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
         workers_.emplace_back(worker_id, this);
@@ -1286,10 +1344,6 @@ namespace palmtree {
 
       while(task_nums != 0) ;
 
-      double end_time = CycleTimer::currentSeconds();
-      double runtime = end_time - start_time_;
-      DLOG(INFO) << "Run for " << runtime << " seconds";
-
       destroyed_ = true;
       for (auto &wthread : workers_)
         wthread.wthread_.join();
@@ -1298,6 +1352,8 @@ namespace palmtree {
         delete layer_width_.back();
         layer_width_.pop_back();
       }
+
+      STAT.print_stat();
 
       free_recursive(tree_root);
     }
@@ -1341,6 +1397,10 @@ namespace palmtree {
       push_batch(op);
 
       // op->wait();
+    }
+
+    void reset_metric() {
+      STAT.reset_metric();
     }
 
     // Wait until all task finished
