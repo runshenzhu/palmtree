@@ -14,6 +14,7 @@
 #include <memory>
 #include <atomic>
 #include <glog/logging.h>
+#include <smmintrin.h>
 #include "CycleTimer.h"
 #include "barrier.h"
 
@@ -51,7 +52,7 @@ namespace palmtree {
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 1;
+    static const int NUM_WORKER = 8;
     static const int BATCH_SIZE = 1024 * NUM_WORKER;
 
   private:
@@ -275,17 +276,49 @@ namespace palmtree {
 
     // liner search in leaf
     // assume there is no duplicated element
-    int search_leaf(const KeyType *input, int size, const KeyType &target) {
+    int search_leaf(const KeyType *data, int size, const KeyType &target) {
+      const __m128i keys = _mm_set1_epi32(target);
+
+      const auto n = size;
+      const auto rounded = 8 * (n/8);
+
+      for (int i=0; i < rounded; i += 8) {
+
+        const __m128i vec1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[i]));
+        const __m128i vec2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[i + 4]));
+
+        const __m128i cmp1 = _mm_cmpeq_epi32(vec1, keys);
+        const __m128i cmp2 = _mm_cmpeq_epi32(vec2, keys);
+
+        const __m128i tmp  = _mm_packs_epi32(cmp1, cmp2);
+        const uint32_t mask = _mm_movemask_epi8(tmp);
+
+        if (mask != 0) {
+          return i + __builtin_ctz(mask)/2;
+        }
+      }
+
+      for (int i = rounded; i < n; i++) {
+        if (data[i] == target) {
+          return i;
+        }
+      }
+
+      return -1;
+
+/*
       int res = -1;
       // loop all element
       for (int i = 0; i < size; i++) {
-        if(key_eq(target, input[i])){
+        if(key_eq(target, data[i])){
           // target < input
           // ignore
           return i;
         }
       }
+
       return res;
+      */
     }
 
 
