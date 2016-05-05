@@ -6,7 +6,8 @@ int main() {
   cout << "Hello, World!" << endl;
 
   fineTree<int, int> fTree(0xffffffff);
-  auto res = fTree.search(1);
+  int value;
+  auto res = fTree.search(1, value);
 
   return res;
 }
