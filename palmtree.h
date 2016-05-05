@@ -14,10 +14,11 @@
 #include <memory>
 #include <atomic>
 #include <glog/logging.h>
-// #include "immintrin.h"
-#include "smmintrin.h"
+#include "immintrin.h"
+// #include "smmintrin.h"
 #include "CycleTimer.h"
 #include "barrier.h"
+#include <jemalloc/jemalloc.h>
 
 using std::cout;
 using std::endl;
@@ -105,7 +106,7 @@ namespace palmtree {
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int BATCH_SIZE_PER_WORKER = 1024;
+    static const int BATCH_SIZE_PER_WORKER = 4096;
 
   private:
     /**
@@ -363,6 +364,7 @@ namespace palmtree {
 
 
     int search_leaf(const KeyType *data, int size, const KeyType &target) {
+      // auto bt = CycleTimer::currentTicks();
       const __m256i keys = _mm256_set1_epi32(target);
 
       const auto n = size;
@@ -377,16 +379,19 @@ namespace palmtree {
         const uint32_t mask = _mm256_movemask_epi8(cmp1);
 
         if (mask != 0) {
+          // STAT.add_stat(0, "search_leaf", CycleTimer::currentTicks() - bt);
           return i + __builtin_ctz(mask)/4;
         }
       }
 
       for (int i = rounded; i < n; i++) {
         if (data[i] == target) {
+          // STAT.add_stat(0, "search_leaf", CycleTimer::currentTicks() - bt);
           return i;
         }
       }
 
+      // STAT.add_stat(0, "search_leaf", CycleTimer::currentTicks() - bt);
       return -1;
     }
 
@@ -395,6 +400,7 @@ namespace palmtree {
     // Return the index of the largest slot whose key <= @target
     // assume there is no duplicated element
     int search_inner(const KeyType *input, int size, const KeyType &target) {
+      // auto bt = CycleTimer::currentTicks();
       int low = 0, high = size - 1;
       while (low != high) {
         int mid = (low + high) / 2 + 1;
@@ -407,6 +413,8 @@ namespace palmtree {
           low = mid;
         }
       }
+      // STAT.add_stat(0, "search_inner", CycleTimer::currentTicks() - bt);
+
       if (low == size) {
         return -1;
       }
@@ -1255,7 +1263,7 @@ namespace palmtree {
           }
           palmtree_->sync(worker_id_);
           if (done_)
-            DLOG(INFO) << "Worker " << worker_id_ << " exit";
+            LOG(INFO) << "Worker " << worker_id_ << " exit";
 
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 0 finished";
           // Stage 1, Search for leafs
@@ -1344,7 +1352,7 @@ namespace palmtree {
                 cout << "key " << op->key_ << " result " << op->result_ << endl;
               }
             }
-            delete op;
+            free(op);
             palmtree_->task_nums--;
           }
 
@@ -1394,6 +1402,8 @@ namespace palmtree {
       STAT.init_metric("collect_batch");
       STAT.init_metric("end_stage");
       STAT.init_metric("batch_sort");
+      STAT.init_metric("search_inner");
+      STAT.init_metric("search_leaf");
 
       // Init the worker thread
       for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
@@ -1444,7 +1454,9 @@ namespace palmtree {
      * @return nullptr if no such k,v pair
      */
     bool find(const KeyType &key UNUSED, ValueType &value UNUSED) {
-      TreeOp* op = new TreeOp(TREE_OP_FIND, key);
+      TreeOp* op = (TreeOp *)malloc(sizeof(TreeOp));
+      op->op_type_ = TREE_OP_FIND;
+      op->key_ = key;
       //TreeOp op(TREE_OP_FIND, key);
 
       push_batch(op);

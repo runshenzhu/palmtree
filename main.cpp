@@ -10,6 +10,7 @@
 #include <map>
 #include <time.h>
 #include <unistd.h>
+#include <jemalloc/jemalloc.h>
 #include "CycleTimer.h"
 
 #define TEST_SIZE 10240000
@@ -264,7 +265,7 @@ int main(int argc, char *argv[]) {
   }
 
 
-  readonly_bench(1024*512*1, 1024*1024*10, c);
+  readonly_bench(1024*512*1, 1024*1024*20, c);
 
   return 0;
 }
