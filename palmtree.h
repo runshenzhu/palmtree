@@ -25,6 +25,8 @@ using std::endl;
 
 #define UNUSED __attribute__((unused))
 
+#define PROFILE
+
 namespace palmtree {
 
   static std::atomic<int> NODE_NUM(0);
@@ -57,21 +59,26 @@ namespace palmtree {
       stats_[metric_name] = std::vector<CycleTimer::SysClock>(worker_num_);
       for (int i = 0; i < worker_num_; i++)
         stats_[metric_name][i] = 0;
+      metric_names_.push_back(metric_name);
     }
 
     /**
      * Print the stats out
      */
     void print_stat() {
-      for (auto itr = stats_.begin(); itr != stats_.end(); itr++) {
-        LOG(INFO) << "[" << itr->first << "] ";
+      for (auto &metric_name : metric_names_) {
+        LOG(INFO) << "\033[1m[" << metric_name << "]\033[0m ";
+        auto &values = stats_[metric_name];
+        std::string line = "";
         for (int i = 0; i < worker_num_; i++) {
-          if (itr->first == "leaf_task") {
-            LOG(INFO) << i << ": " << itr->second[i];
+          if (metric_name == "leaf_task") {
+            line += "\t" + std::to_string(i) + ": " + std::to_string(values[i]);
+            
           } else {
-            LOG(INFO) << i << ": " << itr->second[i] * CycleTimer::secondsPerTick();  
+            line += "\t" + std::to_string(i) + ": " + std::to_string(values[i] * CycleTimer::secondsPerTick());
           }
         }
+        LOG(INFO) << line;
       }
     }
 
@@ -84,6 +91,7 @@ namespace palmtree {
     }
   private:
     std::unordered_map<std::string, std::vector<CycleTimer::SysClock>> stats_;
+    std::vector<std::string> metric_names_;
     int worker_num_;
   } STAT;
 
@@ -364,7 +372,9 @@ namespace palmtree {
 
 
     int search_leaf(const KeyType *data, int size, const KeyType &target) {
+      // #ifdef PROFILE
       // auto bt = CycleTimer::currentTicks();
+      // #endif
       const __m256i keys = _mm256_set1_epi32(target);
 
       const auto n = size;
@@ -379,19 +389,25 @@ namespace palmtree {
         const uint32_t mask = _mm256_movemask_epi8(cmp1);
 
         if (mask != 0) {
+          // #ifdef PROFILE
           // STAT.add_stat(0, "search_leaf", CycleTimer::currentTicks() - bt);
+          // #endif
           return i + __builtin_ctz(mask)/4;
         }
       }
 
       for (int i = rounded; i < n; i++) {
         if (data[i] == target) {
+          // #ifdef PROFILE
           // STAT.add_stat(0, "search_leaf", CycleTimer::currentTicks() - bt);
+          // #endif
           return i;
         }
       }
 
+      // #ifdef PROFILE
       // STAT.add_stat(0, "search_leaf", CycleTimer::currentTicks() - bt);
+      // #endif
       return -1;
     }
 
@@ -400,7 +416,9 @@ namespace palmtree {
     // Return the index of the largest slot whose key <= @target
     // assume there is no duplicated element
     int search_inner(const KeyType *input, int size, const KeyType &target) {
+      // #ifdef PROFILE
       // auto bt = CycleTimer::currentTicks();
+      // #endif
       int low = 0, high = size - 1;
       while (low != high) {
         int mid = (low + high) / 2 + 1;
@@ -413,7 +431,9 @@ namespace palmtree {
           low = mid;
         }
       }
+      // #ifdef PROFILE
       // STAT.add_stat(0, "search_inner", CycleTimer::currentTicks() - bt);
+      // #endif
 
       if (low == size) {
         return -1;
@@ -1266,6 +1286,9 @@ namespace palmtree {
             LOG(INFO) << "Worker " << worker_id_ << " exit";
 
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 0 finished";
+#ifdef PROFILE
+          auto s1_bt = CycleTimer::currentTicks();
+#endif
           // Stage 1, Search for leafs
           DLOG(INFO) << "Worker " << worker_id_ << " got " << current_tasks_.size() << " tasks";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 1: search for leaves";
@@ -1273,9 +1296,15 @@ namespace palmtree {
             op->target_node_ = palmtree_->search(op->key_);
             CHECK(op->target_node_ != nullptr) << "search returns nullptr";
           }
-
-          asm volatile("": : :"memory");
+#ifdef PROFILE
+          STAT.add_stat(worker_id_, "stage1", CycleTimer::currentTicks() - s1_bt);
+#endif
           palmtree_->sync(worker_id_);
+
+#ifdef PROFILE
+          auto s2_bt = CycleTimer::currentTicks();
+#endif
+
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 1 finished";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 2: Process leaves";
           // Stage 2, redistribute work, read the tree then modify, each thread
@@ -1307,7 +1336,14 @@ namespace palmtree {
             }
             upper_mods[node->parent].push_back(upper_mod);
           }
+
+#ifdef PROFILE
+          STAT.add_stat(worker_id_, "stage2", CycleTimer::currentTicks() - s2_bt);
+#endif
           palmtree_->sync(worker_id_);
+#ifdef PROFILE
+          auto s3_bt = CycleTimer::currentTicks();
+#endif
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 2 finished";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 3: propagate tree modification";
           // Stage 3, propagate tree modifications back
@@ -1331,10 +1367,16 @@ namespace palmtree {
             palmtree_->sync(worker_id_);
             // DLOG_IF(INFO, worker_id_ == 0) << "Layer #" << layer << " done";
           } // End propagate
-
+#ifdef PROFILE
+          STAT.add_stat(worker_id_, "stage3", CycleTimer::currentTicks() - s3_bt);
+#endif
           palmtree_->sync(worker_id_);
+#ifdef PROFILE
+          auto s4_bt = CycleTimer::currentTicks();
+#endif
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 3 finished";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4: Handle root";
+
           // Stage 4, modify the root, re-insert orphaned, mark work as done
           if (worker_id_ == 0) {
             CycleTimer::SysClock st = CycleTimer::currentTicks();
@@ -1358,6 +1400,9 @@ namespace palmtree {
 
           current_tasks_.clear();
 
+#ifdef PROFILE
+          STAT.add_stat(worker_id_, "stage4", CycleTimer::currentTicks() - s4_bt);
+#endif
           palmtree_->sync(worker_id_);
             
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4 finished";
@@ -1396,14 +1441,22 @@ namespace palmtree {
       layer_width_.push_back(new std::atomic<int>(1));
 
       STAT = Stats(NUM_WORKER);
-      STAT.init_metric("sync_time");
-      STAT.init_metric("round_time");
-      STAT.init_metric("leaf_task");
-      STAT.init_metric("collect_batch");
-      STAT.init_metric("end_stage");
+      
       STAT.init_metric("batch_sort");
+      STAT.init_metric("collect_batch");
+      STAT.init_metric("stage1");
+      STAT.init_metric("stage2");
+      STAT.init_metric("stage3");
+      STAT.init_metric("stage4");
+      STAT.init_metric("end_stage");
+
       STAT.init_metric("search_inner");
       STAT.init_metric("search_leaf");
+
+      STAT.init_metric("leaf_task");
+
+      STAT.init_metric("sync_time");
+      STAT.init_metric("round_time");
 
       // Init the worker thread
       for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
