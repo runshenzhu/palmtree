@@ -214,7 +214,7 @@ void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = fa
   palmtreep->wait_finish();
   double end = CycleTimer::currentSeconds();
   LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << read_count/(end-start)/1000 << " K rps";
-
+  double runtime = end-start;
 
   if (run_std_map) {
     LOG(INFO) << "Running std map";
@@ -229,6 +229,9 @@ void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = fa
     }
     end = CycleTimer::currentSeconds();
     LOG(INFO) << "std::map run for " << end-start << "s, " << "thput:" << std::fixed << read_count/(end-start)/1000 << " K rps";
+
+    double runtime_ref = end-start;
+    LOG(INFO) << "SPEEDUP: " << runtime_ref / runtime << " X";
   }
 }
 
