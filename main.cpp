@@ -198,6 +198,8 @@ void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = fa
   palmtree::PalmTree<int, int> *palmtreep = &palmtree;
 
   populate_palm_tree(palmtreep, entry_count);
+  // Reset the metrics
+  palmtreep->reset_metric();
 
   // Wait for insertion finished
   LOG(INFO) << entry_count << " entries inserted";
@@ -259,7 +261,7 @@ int main(int argc, char *argv[]) {
   }
 
 
-  readonly_bench(1024*512, 1024*1024*10, c);
+  readonly_bench(1024*512*10, 1024*1024*10, c);
 
   return 0;
 }
