@@ -24,6 +24,7 @@ using std::endl;
 #define UNUSED __attribute__((unused))
 
 namespace palmtree {
+
   static std::atomic<int> NODE_NUM(0);
   /**
    * Tree operation types
@@ -86,15 +87,22 @@ namespace palmtree {
            typename PairType = std::pair<KeyType, ValueType>,
            typename KeyComparator = std::less<KeyType> >
   class PalmTree {
+  public:
+    // Number of working threads
+    int NUM_WORKER;
+    int BATCH_SIZE;
+
+  private:
     // Max number of slots per inner node
     static const int INNER_MAX_SLOT = 256;
     // Max number of slots per leaf node
     static const int LEAF_MAX_SLOT = 128;
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
-    // Number of working threads
-    static const int NUM_WORKER = 2;
-    static const int BATCH_SIZE = 1024 * NUM_WORKER;
+
+    static const int BATCH_SIZE_PER_WORKER = 1024;
+
+
 
   private:
     /**
@@ -961,7 +969,7 @@ namespace palmtree {
       }
       // The #0 thread is responsible to collect tasks to a batch
       void collect_batch() {
-        DLOG(INFO) << "Thread " << worker_id_ << " collect tasks " << BATCH_SIZE;
+        DLOG(INFO) << "Thread " << worker_id_ << " collect tasks " << palmtree_->BATCH_SIZE;
         palmtree_->current_batch_.clear();
 
         int sleep_time = 0;
@@ -988,11 +996,11 @@ namespace palmtree {
          
         // Partition the task among threads
         int batch_size = palmtree_->current_batch_.size();
-        int task_per_thread = batch_size / NUM_WORKER;
-        int task_residue = batch_size - task_per_thread * NUM_WORKER;
+        int task_per_thread = batch_size / palmtree_->NUM_WORKER;
+        int task_residue = batch_size - task_per_thread * palmtree_->NUM_WORKER;
         int worker_id = 0;
 
-        for(int i = 0; i < NUM_WORKER; i++){
+        for(int i = 0; i < palmtree_->NUM_WORKER; i++){
           // Clear old tasks
           palmtree_->workers_[worker_id].current_tasks_.clear();
         }
@@ -1032,7 +1040,7 @@ namespace palmtree {
         }
 
         // Then add the operations that belongs to a node of mine
-        for (int i = worker_id_+1; i < NUM_WORKER; i++) {
+        for (int i = worker_id_+1; i < palmtree_->NUM_WORKER; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
           for (auto op : wthread.current_tasks_) {
             CHECK(op->target_node_ != nullptr) << "worker " << i <<" hasn't finished search";
@@ -1074,7 +1082,7 @@ namespace palmtree {
         }
 
         // Steal work from other threads
-        for (int i = worker_id_+1; i < NUM_WORKER; i++) {
+        for (int i = worker_id_+1; i < palmtree_->NUM_WORKER; i++) {
           auto &wthread = palmtree_->workers_[i];
           for (auto other_itr = wthread.node_mods_[layer].begin(); other_itr != wthread.node_mods_[layer].end(); other_itr++) {
             auto itr = cur_mods.find(other_itr->first);
@@ -1209,7 +1217,7 @@ namespace palmtree {
             collect_batch();
             // Check if the tree is destroyed, we must do it before the sync point
             if (palmtree_->destroyed_) {
-              for (int i = 0; i < NUM_WORKER; i++)
+              for (int i = 0; i < palmtree_->NUM_WORKER; i++)
                 palmtree_->workers_[i].done_ = true;
             };
           }
@@ -1326,17 +1334,17 @@ namespace palmtree {
   public:
     std::atomic<int> task_nums;
 
-    PalmTree(KeyType min_key): 
+    PalmTree(KeyType min_key, int num_worker):
       tree_depth_(1), 
       destroyed_(false), 
       min_key_(min_key), 
-      barrier_(NUM_WORKER), 
+      barrier_(num_worker),
       task_batch_queue_{1024*500}
     {
-      init();
-    }
+      NUM_WORKER = num_worker;
+      BATCH_SIZE = BATCH_SIZE_PER_WORKER * NUM_WORKER;
 
-    void init() {
+      cout << "init palm tree with " << NUM_WORKER << " workers" << endl;
       // Init the root node
       tree_root = new InnerNode(nullptr, 1);
       add_item<InnerNode, Node *>((InnerNode *)tree_root, min_key_, new LeafNode(tree_root, 0));
@@ -1354,7 +1362,7 @@ namespace palmtree {
       }
 
       for (auto &worker : workers_) {
-         worker.start();
+        worker.start();
       }
 
       task_nums = 0;
