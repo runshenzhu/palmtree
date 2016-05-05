@@ -219,6 +219,7 @@ void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = fa
     palmtreep->find(last_key, res);    
   }
 
+  LOG(INFO) << palmtreep->task_nums << " left";
   palmtreep->wait_finish();
   double end = CycleTimer::currentSeconds();
   LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << read_count/(end-start)/1000 << " K rps";
