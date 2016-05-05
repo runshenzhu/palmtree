@@ -15,6 +15,8 @@
 #define TEST_SIZE 10240000
 using namespace std;
 
+int worker_num;
+
 class fast_random {
  public:
   fast_random(unsigned long seed) : seed(0) { set_seed0(seed); }
@@ -70,7 +72,7 @@ class fast_random {
 };
 
 void test() {
-  palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min());
+  palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min(), worker_num);
   palmtree::PalmTree<int, int> *palmtreep = &palmtree;
 
   for (int i = 0; i < 32; i++) {
@@ -137,7 +139,7 @@ void bench() {
 
   std::random_shuffle(buff, buff + TEST_SIZE);
 
-  palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min());
+  palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min(), worker_num);
   palmtree::PalmTree<int, int> *palmtreep = &palmtree;
 
   std::vector<std::thread> threads;
@@ -192,10 +194,12 @@ void populate_palm_tree(palmtree::PalmTree<int, int> *palmtreep, size_t entry_co
 // of read operations
 void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = false) {
   LOG(INFO) << "Begin palmtree read only benchmark";
-  palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min());
+  palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min(), worker_num);
   palmtree::PalmTree<int, int> *palmtreep = &palmtree;
 
   populate_palm_tree(palmtreep, entry_count);
+  // Reset the metrics
+  palmtreep->reset_metric();
 
   // Wait for insertion finished
   LOG(INFO) << entry_count << " entries inserted";
@@ -240,7 +244,24 @@ int main(int argc, char *argv[]) {
   FLAGS_logtostderr = 1;
   google::InitGoogleLogging(argv[0]);
 
-  readonly_bench(1024*512, 1024*1024*10, false);
+  if(argc < 3) {
+    // print usage
+    cout << "usage example: 8 true" << endl;
+    cout << "\trunning 8 workers, running map to compare performance" << endl;
+    exit(0);
+  }
+
+  worker_num = atoi(argv[1]);
+  bool c;
+
+  if(strcmp(argv[2], "true") == 0) {
+    c = true;
+  }else{
+    c = false;
+  }
+
+
+  readonly_bench(1024*512*10, 1024*1024*10, c);
 
   return 0;
 }

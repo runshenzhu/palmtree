@@ -1,6 +1,7 @@
 # CFLAGS=-Werror -Wall -std=c++11 -g -ggdb -I/usr/local/include
-CFLAGS=-Werror -Wall -std=c++11 -O3 -I/usr/local/include
+CFLAGS=-Werror -Wall -std=c++11 -msse4.1 -pedantic -O3 -I/usr/local/include
 LDFLAGS=-L/usr/local/lib -lboost_atomic -lboost_system -lboost_thread -lglog
+# LDFLAGS=-L/usr/local/lib -lboost_atomic-mt -lboost_system-mt -lboost_thread-mt -lglog
 CC=g++
 
 all: palmtree_test

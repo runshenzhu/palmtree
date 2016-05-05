@@ -14,6 +14,7 @@
 #include <memory>
 #include <atomic>
 #include <glog/logging.h>
+#include <smmintrin.h>
 #include "CycleTimer.h"
 #include "barrier.h"
 
@@ -23,6 +24,7 @@ using std::endl;
 #define UNUSED __attribute__((unused))
 
 namespace palmtree {
+
   static std::atomic<int> NODE_NUM(0);
   /**
    * Tree operation types
@@ -89,6 +91,12 @@ namespace palmtree {
            typename PairType = std::pair<KeyType, ValueType>,
            typename KeyComparator = std::less<KeyType> >
   class PalmTree {
+  public:
+    // Number of working threads
+    int NUM_WORKER;
+    int BATCH_SIZE;
+
+  private:
     // Max number of slots per inner node
     static const int INNER_MAX_SLOT = 256;
     // Max number of slots per leaf node
@@ -96,8 +104,7 @@ namespace palmtree {
     // Threshold to control bsearch or linear search
     static const int BIN_SEARCH_THRESHOLD = 32;
     // Number of working threads
-    static const int NUM_WORKER = 4;
-    static const int BATCH_SIZE = 1024 * NUM_WORKER;
+    static const int BATCH_SIZE_PER_WORKER = 1024;
 
   private:
     /**
@@ -320,17 +327,49 @@ namespace palmtree {
 
     // liner search in leaf
     // assume there is no duplicated element
-    int search_leaf(const KeyType *input, int size, const KeyType &target) {
+    int search_leaf(const KeyType *data, int size, const KeyType &target) {
+      const __m128i keys = _mm_set1_epi32(target);
+
+      const auto n = size;
+      const auto rounded = 8 * (n/8);
+
+      for (int i=0; i < rounded; i += 8) {
+
+        const __m128i vec1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[i]));
+        const __m128i vec2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[i + 4]));
+
+        const __m128i cmp1 = _mm_cmpeq_epi32(vec1, keys);
+        const __m128i cmp2 = _mm_cmpeq_epi32(vec2, keys);
+
+        const __m128i tmp  = _mm_packs_epi32(cmp1, cmp2);
+        const uint32_t mask = _mm_movemask_epi8(tmp);
+
+        if (mask != 0) {
+          return i + __builtin_ctz(mask)/2;
+        }
+      }
+
+      for (int i = rounded; i < n; i++) {
+        if (data[i] == target) {
+          return i;
+        }
+      }
+
+      return -1;
+
+/*
       int res = -1;
       // loop all element
       for (int i = 0; i < size; i++) {
-        if(key_eq(target, input[i])){
+        if(key_eq(target, data[i])){
           // target < input
           // ignore
           return i;
         }
       }
+
       return res;
+      */
     }
 
 
@@ -932,7 +971,7 @@ namespace palmtree {
       }
       // The #0 thread is responsible to collect tasks to a batch
       void collect_batch() {
-        DLOG(INFO) << "Thread " << worker_id_ << " collect tasks " << BATCH_SIZE;
+        DLOG(INFO) << "Thread " << worker_id_ << " collect tasks " << palmtree_->BATCH_SIZE;
         palmtree_->current_batch_.clear();
 
         int sleep_time = 0;
@@ -959,11 +998,11 @@ namespace palmtree {
          
         // Partition the task among threads
         int batch_size = palmtree_->current_batch_.size();
-        int task_per_thread = batch_size / NUM_WORKER;
-        int task_residue = batch_size - task_per_thread * NUM_WORKER;
+        int task_per_thread = batch_size / palmtree_->NUM_WORKER;
+        int task_residue = batch_size - task_per_thread * palmtree_->NUM_WORKER;
         int worker_id = 0;
 
-        for(int i = 0; i < NUM_WORKER; i++){
+        for(int i = 0; i < palmtree_->NUM_WORKER; i++){
           // Clear old tasks
           palmtree_->workers_[worker_id].current_tasks_.clear();
         }
@@ -1003,7 +1042,7 @@ namespace palmtree {
         }
 
         // Then add the operations that belongs to a node of mine
-        for (int i = worker_id_+1; i < NUM_WORKER; i++) {
+        for (int i = worker_id_+1; i < palmtree_->NUM_WORKER; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
           for (auto op : wthread.current_tasks_) {
             CHECK(op->target_node_ != nullptr) << "worker " << i <<" hasn't finished search";
@@ -1047,7 +1086,7 @@ namespace palmtree {
         }
 
         // Steal work from other threads
-        for (int i = worker_id_+1; i < NUM_WORKER; i++) {
+        for (int i = worker_id_+1; i < palmtree_->NUM_WORKER; i++) {
           auto &wthread = palmtree_->workers_[i];
           for (auto other_itr = wthread.node_mods_[layer].begin(); other_itr != wthread.node_mods_[layer].end(); other_itr++) {
             auto itr = cur_mods.find(other_itr->first);
@@ -1183,7 +1222,7 @@ namespace palmtree {
             collect_batch();
             // Check if the tree is destroyed, we must do it before the sync point
             if (palmtree_->destroyed_) {
-              for (int i = 0; i < NUM_WORKER; i++)
+              for (int i = 0; i < palmtree_->NUM_WORKER; i++)
                 palmtree_->workers_[i].done_ = true;
             };
             CycleTimer::SysClock passed = CycleTimer::currentTicks() - st;
@@ -1304,17 +1343,17 @@ namespace palmtree {
   public:
     std::atomic<int> task_nums;
 
-    PalmTree(KeyType min_key): 
+    PalmTree(KeyType min_key, int num_worker):
       tree_depth_(1), 
       destroyed_(false), 
       min_key_(min_key), 
-      barrier_(NUM_WORKER), 
+      barrier_(num_worker),
       task_batch_queue_{1024*500}
     {
-      init();
-    }
+      NUM_WORKER = num_worker;
+      BATCH_SIZE = BATCH_SIZE_PER_WORKER * NUM_WORKER;
 
-    void init() {
+      cout << "init palm tree with " << NUM_WORKER << " workers" << endl;
       // Init the root node
       tree_root = new InnerNode(nullptr, 1);
       add_item<InnerNode, Node *>((InnerNode *)tree_root, min_key_, new LeafNode(tree_root, 0));
@@ -1335,7 +1374,7 @@ namespace palmtree {
       }
 
       for (auto &worker : workers_) {
-         worker.start();
+        worker.start();
       }
 
       task_nums = 0;
