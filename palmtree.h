@@ -994,8 +994,6 @@ namespace palmtree {
             break;
           } else {
             sleep_time ++;
-            if (sleep_time % 10 == 0)
-              boost::this_thread::sleep_for(boost::chrono::milliseconds(10));
           }
         }
 
