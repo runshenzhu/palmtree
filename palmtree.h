@@ -955,6 +955,8 @@ namespace palmtree {
         }
       // Worker id, the thread with worker id 0 will need to be the coordinator
       int worker_id_;
+      // The work for the worker at each stage
+      std::vector<TreeOp *> current_tasks_;
       // Node modifications on each layer, the size of the vector will be the
       // same as the tree height
       typedef std::unordered_map<Node *, std::vector<NodeMod>> NodeModsMapType;
@@ -993,6 +995,7 @@ namespace palmtree {
           if (res) {
             break;
           } else {
+            DLOG(INFO) << sleep_time;
             sleep_time ++;
           }
         }
@@ -1003,19 +1006,34 @@ namespace palmtree {
 
         auto bt = CycleTimer::currentTicks();
         // firstly sort the batch
-        std::sort(palmtree_->current_batch_.begin(), palmtree_->current_batch_.end(), [this](const TreeOp *op1, const TreeOp *op2) {
-            return palmtree_->key_less(op1->key_, op2->key_);
-        });
+        // std::sort(palmtree_->current_batch_.begin(), palmtree_->current_batch_.end(), [this](const TreeOp *op1, const TreeOp *op2) {
+            // return palmtree_->key_less(op1->key_, op2->key_);
+        // });
         STAT.add_stat(worker_id_, "batch_sort", CycleTimer::currentTicks() - bt);
+
+        // Partition the task among threads
+        int batch_size = palmtree_->current_batch_.size();
+        int task_per_thread = batch_size / palmtree_->NUM_WORKER;
+        int task_residue = batch_size - task_per_thread * palmtree_->NUM_WORKER;
+        int worker_id = 0;
+
+        int i;
+        for (i = 0; i < batch_size; worker_id++) {
+          int ntask = task_per_thread + (task_residue > 0 ? 1 : 0);
+
+          for (int j = i; j < i+ntask; j++)
+            palmtree_->workers_[worker_id].current_tasks_
+              .push_back(palmtree_->current_batch_[j]);
+          i += ntask;
+          task_residue--;
+        }
+        CHECK(i == batch_size) << "Not all work distributed";
       }
 
       // Redistribute the tasks on leaf node
       void redistribute_leaf_tasks(std::unordered_map<Node *, std::vector<TreeOp *>> &result) {
         // First add current tasks
-        int lower = LOWER();
-        int upper = UPPER();
-        for (int i = lower; i < upper; i++) {
-          auto op = palmtree_->current_batch_[i];
+        for (auto op : current_tasks_) {
           if (result.find(op->target_node_) == result.end()) {
             result.emplace(op->target_node_, std::vector<TreeOp *>());
           }
@@ -1024,22 +1042,26 @@ namespace palmtree {
         }
 
         // Then remove nodes that don't belong to the current worker
-        for (int i = 0; i < lower; i++) {
-          auto op = palmtree_->current_batch_[i];
-          result.erase(op->target_node_);
+        for (int i = 0; i < worker_id_; i++) {
+          WorkerThread &wthread = palmtree_->workers_[i];
+          for (auto op : wthread.current_tasks_) {
+            result.erase(op->target_node_);
+          }
         }
 
         // Then add the operations that belongs to a node of mine
-        for (int i = upper; i < palmtree_->current_batch_.size(); i++) {
-          auto op = palmtree_->current_batch_[i];
-          
-          CHECK(op->target_node_ != nullptr) << "worker " << i <<" hasn't finished search";
-          if (result.find(op->target_node_) != result.end()) {
-            result[op->target_node_].push_back(op);
+        for (int i = worker_id_+1; i < palmtree_->NUM_WORKER; i++) {
+          WorkerThread &wthread = palmtree_->workers_[i];
+          for (auto op : wthread.current_tasks_) {
+            CHECK(op->target_node_ != nullptr) << "worker " << i <<" hasn't finished search";
+            if (result.find(op->target_node_) != result.end()) {
+              result[op->target_node_].push_back(op);
+            }
           }
         }
 
         DLOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution";
+
 
         // Calculate number of tasks
         int sum = 0;
@@ -1218,12 +1240,9 @@ namespace palmtree {
 
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 0 finished";
           // Stage 1, Search for leafs
+          DLOG(INFO) << "Worker " << worker_id_ << " got " << current_tasks_.size() << " tasks";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 1: search for leaves";
-
-          auto lower = LOWER();
-          auto upper = UPPER();
-          for (int i = lower; i < upper; i++) {
-            auto op = palmtree_->current_batch_[i];
+          for (auto op : current_tasks_) {
             op->target_node_ = palmtree_->search(op->key_);
             CHECK(op->target_node_ != nullptr) << "search returns nullptr";
           }
@@ -1298,8 +1317,7 @@ namespace palmtree {
             // palmtree_->ensure_tree_structure(palmtree_->tree_root, 0);
           }
 
-          for (int i = lower; i < upper; i++) {
-            auto op = palmtree_->current_batch_[i];
+          for (auto op : current_tasks_) {
             op->done_ = true;
             if (op->op_type_ == TREE_OP_FIND) {
               if(op->boolean_result_ == false || op->key_ != op->result_) {
@@ -1310,6 +1328,8 @@ namespace palmtree {
             delete op;
             palmtree_->task_nums--;
           }
+
+          current_tasks_.clear();
 
           palmtree_->sync(worker_id_);
             
@@ -1442,6 +1462,10 @@ namespace palmtree {
 
     void reset_metric() {
       STAT.reset_metric();
+    }
+
+    int batch_size() {
+      return BATCH_SIZE_PER_WORKER * NUM_WORKER;
     }
 
     // Wait until all task finished

@@ -209,10 +209,13 @@ void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = fa
   double start = CycleTimer::currentSeconds();
   LOG(INFO) << "Benchmark started";
 
+  int one_step = entry_count / palmtreep->batch_size();
+  int last_key = 0;
   for (size_t i = 0; i < read_count; i++) {
+    last_key += rng.next_u32() % one_step;
+    last_key %= entry_count;
     int res;
-    int rand_key = rng.next_u32() % entry_count;
-    palmtreep->find(rand_key, res);    
+    palmtreep->find(last_key, res);    
   }
 
   palmtreep->wait_finish();
