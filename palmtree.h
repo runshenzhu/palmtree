@@ -1386,17 +1386,22 @@ namespace palmtree {
             // palmtree_->ensure_tree_structure(palmtree_->tree_root, 0);
           }
 
+          auto st2 = CycleTimer::currentTicks();
           for (auto op : current_tasks_) {
-            op->done_ = true;
+            // op->done_ = true;
             if (op->op_type_ == TREE_OP_FIND) {
               if(op->boolean_result_ == false || op->key_ != op->result_) {
-                cout << "find " << op->key_ << " fail"<<endl;
+                cout << "find " << op->key_ << " fail" <<endl;
                 cout << "key " << op->key_ << " result " << op->result_ << endl;
               }
             }
-            free(op);
-            palmtree_->task_nums--;
+            // free(op);
           }
+          STAT.add_stat(worker_id_, "deliver tasks", CycleTimer::currentTicks() - st2);
+
+          auto st3 = CycleTimer::currentTicks();
+          palmtree_->task_nums -= current_tasks_.size();
+          STAT.add_stat(worker_id_, "dec task num", CycleTimer::currentTicks() - st3);
 
           current_tasks_.clear();
 
@@ -1457,6 +1462,9 @@ namespace palmtree {
 
       STAT.init_metric("sync_time");
       STAT.init_metric("round_time");
+
+      STAT.init_metric("deliver tasks");
+      STAT.init_metric("dec task num");
 
       // Init the worker thread
       for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
