@@ -1083,6 +1083,7 @@ namespace palmtree {
         DLOG(INFO) << "Thread " << worker_id_ << " collect tasks " << palmtree_->BATCH_SIZE;
 
         if (worker_id_ == 0) {
+          auto bt = CycleTimer::currentTicks();
           int sleep_time = 0;
           while (sleep_time < 1024) {
 
@@ -1094,6 +1095,7 @@ namespace palmtree {
               sleep_time ++;
             }
           }
+          STAT.add_stat(0, "fetch_batch", CycleTimer::currentTicks() - bt);
           // DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_->size();  
         }
 
@@ -1527,7 +1529,7 @@ namespace palmtree {
 
       STAT = Stats(NUM_WORKER);
       
-      STAT.init_metric("batch_sort");
+      STAT.init_metric("fetch_batch");
       STAT.init_metric("stage0");
       STAT.init_metric("stage1");
       STAT.init_metric("stage2");
