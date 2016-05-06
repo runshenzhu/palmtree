@@ -1052,6 +1052,7 @@ namespace palmtree {
       int worker_id_;
       // The work for the worker at each stage
       std::vector<TreeOp *> current_tasks_;
+      std::unordered_map<Node *, std::vector<TreeOp *>> leaf_ops_;
       // Node modifications on each layer, the size of the vector will be the
       // same as the tree height
       typedef std::unordered_map<Node *, std::vector<NodeMod>> NodeModsMapType;
@@ -1147,33 +1148,42 @@ namespace palmtree {
 
       // Redistribute the tasks on leaf node
       void redistribute_leaf_tasks(std::unordered_map<Node *, std::vector<TreeOp *>> &result) {
+        leaf_ops_.clear();
+
         // First add current tasks
         for (auto op : current_tasks_) {
+          if (leaf_ops_.find(op->target_node_) == leaf_ops_.end()) {
+            leaf_ops_.emplace(op->target_node_, std::vector<TreeOp *>());
+          }
+
           if (result.find(op->target_node_) == result.end()) {
             result.emplace(op->target_node_, std::vector<TreeOp *>());
           }
 
+          leaf_ops_[op->target_node_].push_back(op);
           result[op->target_node_].push_back(op);
         }
 
-        // Then remove nodes that don't belong to the current worker
+
+        palmtree_->sync(worker_id_);
+
         for (int i = 0; i < worker_id_; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
-          for (auto op : wthread.current_tasks_) {
-            result.erase(op->target_node_);
+          for(auto itr = wthread.leaf_ops_.begin(); itr != wthread.leaf_ops_.end(); itr++) {
+            result.erase(itr->first);
           }
         }
 
-        // Then add the operations that belongs to a node of mine
         for (int i = worker_id_+1; i < palmtree_->NUM_WORKER; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
-          for (auto op : wthread.current_tasks_) {
-            CHECK(op->target_node_ != nullptr) << "worker " << i <<" hasn't finished search";
-            if (result.find(op->target_node_) != result.end()) {
-              result[op->target_node_].push_back(op);
+          for (auto itr = wthread.leaf_ops_.begin(); itr != wthread.leaf_ops_.end(); itr++) {
+            if (result.find(itr->first) != result.end()) {
+              auto end = result[itr->first].end();
+              result[itr->first].insert(end, itr->second.begin(), itr->second.end());
             }
           }
         }
+
 
         // LOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution";
 
