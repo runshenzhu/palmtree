@@ -1096,10 +1096,11 @@ namespace palmtree {
             }
           }
           STAT.add_stat(0, "fetch_batch", CycleTimer::currentTicks() - bt);
+
           // DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_->size();  
         }
 
-         palmtree_->sync(worker_id_);    
+        palmtree_->sync(worker_id_);    
 
         if (palmtree_->current_batch_ == nullptr) {
           return;
@@ -1112,9 +1113,10 @@ namespace palmtree {
         // auto bt = CycleTimer::currentTicks();
         // firstly sort the batch
         // std::sort(palmtree_->current_batch_.begin(), palmtree_->current_batch_.end(), [this](const TreeOp *op1, const TreeOp *op2) {
-            // return palmtree_->key_less(op1->key_, op2->key_);
+        //     return palmtree_->key_less(op1->key_, op2->key_);
         // });
         // STAT.add_stat(worker_id_, "batch_sort", CycleTimer::currentTicks() - bt);
+
 
         // Partition the task among threads
         int batch_size = palmtree_->current_batch_->size();
@@ -1147,6 +1149,9 @@ namespace palmtree {
 
       // Redistribute the tasks on leaf node
       void redistribute_leaf_tasks(std::unordered_map<Node *, std::vector<TreeOp *>> &result) {
+#ifdef PROFILE
+        auto bt = CycleTimer::currentTicks();
+#endif
         // First add current tasks
         for (auto op : current_tasks_) {
           if (result.find(op->target_node_) == result.end()) {
@@ -1159,7 +1164,10 @@ namespace palmtree {
         // Then remove nodes that don't belong to the current worker
         for (int i = 0; i < worker_id_; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
-          for (auto op : wthread.current_tasks_) {
+          for (int j = wthread.current_tasks_.size()-1; j >= 0; j--) {
+            auto &op = wthread.current_tasks_[j];
+            if (result.count(op->target_node_) == 0)
+              break;
             result.erase(op->target_node_);
           }
         }
@@ -1167,12 +1175,19 @@ namespace palmtree {
         // Then add the operations that belongs to a node of mine
         for (int i = worker_id_+1; i < palmtree_->NUM_WORKER; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
+          bool early_break = false;
           for (auto op : wthread.current_tasks_) {
             CHECK(op->target_node_ != nullptr) << "worker " << i <<" hasn't finished search";
             if (result.find(op->target_node_) != result.end()) {
               result[op->target_node_].push_back(op);
+            } else {
+              early_break = true;
+              break;
             }
           }
+
+          if (early_break)
+            break;
         }
 
         // LOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution";
@@ -1188,6 +1203,10 @@ namespace palmtree {
 
         // LOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution, " << sum << " tasks in total";
         // std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+#ifdef PROFILE
+        STAT.add_stat(worker_id_, "redist_leaf", CycleTimer::currentTicks() - bt);
+#endif
       }
 
       /**
@@ -1230,6 +1249,9 @@ namespace palmtree {
        *  out the todo node modifications on the #0 layer
        *  */
       void resolve_hazards(const std::unordered_map<Node *, std::vector<TreeOp *>> &tree_ops UNUSED) {
+#ifdef PROFILE
+        auto bt = CycleTimer::currentTicks();
+#endif
         node_mods_[0].clear();
         auto &leaf_mods = node_mods_[0];
         std::unordered_map<KeyType, ValueType> changed_values;
@@ -1272,7 +1294,11 @@ namespace palmtree {
             }
           }
         }
-      }
+
+#ifdef PROFILE
+        STAT.add_stat(worker_id_, "resolve_hazards", CycleTimer::currentTicks() - bt);
+#endif
+      } // End resolve_hazards
 
       /**
        * @brief Handle root split and re-insert orphaned keys. It may need to grow the tree height
@@ -1532,6 +1558,8 @@ namespace palmtree {
       STAT.init_metric("fetch_batch");
       STAT.init_metric("stage0");
       STAT.init_metric("stage1");
+      STAT.init_metric("redist_leaf");
+      STAT.init_metric("resolve_hazards");
       STAT.init_metric("stage2");
       STAT.init_metric("stage3");
       STAT.init_metric("stage4");

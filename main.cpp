@@ -180,8 +180,8 @@ void populate_palm_tree(palmtree::PalmTree<int, int> *palmtreep, size_t entry_co
   std::random_shuffle(buff, buff + entry_count);
 
   for(size_t j = 0; j < entry_count; j++) {
-    auto kv = buff[j];
-    palmtreep->insert(kv, kv);
+    // auto kv = buff[j];
+    palmtreep->insert(j, j);
   }
 
   delete buff;
@@ -210,13 +210,20 @@ void readonly_bench(size_t entry_count, size_t read_count, bool run_std_map = fa
   double start = CycleTimer::currentSeconds();
   LOG(INFO) << "Benchmark started";
 
-  int one_step = entry_count / palmtreep->batch_size();
+  int one_step = entry_count / (palmtreep->batch_size()+1);
   int last_key = 0;
+  int batch_task_count = 0;
   for (size_t i = 0; i < read_count; i++) {
     last_key += rng.next_u32() % one_step;
     last_key %= entry_count;
+    batch_task_count++;
     int res;
-    palmtreep->find(last_key, res);    
+    palmtreep->find(last_key, res);
+
+    if (batch_task_count >= palmtreep->batch_size()) {
+      batch_task_count = 0;
+      last_key = 0;
+    }
   }
 
   LOG(INFO) << palmtreep->task_nums << " left";
