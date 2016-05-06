@@ -1052,6 +1052,7 @@ namespace palmtree {
       int worker_id_;
       // The work for the worker at each stage
       std::vector<TreeOp *> current_tasks_;
+      std::unordered_map<Node *, std::vector<TreeOp *>> leaf_ops_;
       // Node modifications on each layer, the size of the vector will be the
       // same as the tree height
       typedef std::unordered_map<Node *, std::vector<NodeMod>> NodeModsMapType;
@@ -1083,7 +1084,6 @@ namespace palmtree {
         DLOG(INFO) << "Thread " << worker_id_ << " collect tasks " << palmtree_->BATCH_SIZE;
 
         if (worker_id_ == 0) {
-          auto bt = CycleTimer::currentTicks();
           int sleep_time = 0;
           while (sleep_time < 1024) {
 
@@ -1096,7 +1096,6 @@ namespace palmtree {
             }
           }
           STAT.add_stat(0, "fetch_batch", CycleTimer::currentTicks() - bt);
-
           // DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_->size();  
         }
 
@@ -1172,7 +1171,6 @@ namespace palmtree {
           }
         }
 
-        // Then add the operations that belongs to a node of mine
         for (int i = worker_id_+1; i < palmtree_->NUM_WORKER; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
           bool early_break = false;
@@ -1189,6 +1187,7 @@ namespace palmtree {
           if (early_break)
             break;
         }
+
 
         // LOG(INFO) << "Worker " << worker_id_ << " has " << result.size() << " nodes of tasks after task redistribution";
 
@@ -1386,9 +1385,23 @@ namespace palmtree {
           // Stage 1, Search for leafs
           DLOG(INFO) << "Worker " << worker_id_ << " got " << current_tasks_.size() << " tasks";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 1: search for leaves";
+
+          leaf_ops_.clear();
+          std::unordered_map<Node *, std::vector<TreeOp *>> collected_tasks;
           for (auto op : current_tasks_) {
             op->target_node_ = palmtree_->search(op->key_);
+
             CHECK(op->target_node_ != nullptr) << "search returns nullptr";
+
+            if (leaf_ops_.find(op->target_node_) == leaf_ops_.end()) {
+              //leaf_ops_.insert(op->target_node_, std::vector<TreeOp *>());
+              //collected_tasks.insert(op->target_node_, std::vector<TreeOp *>());
+              leaf_ops_[op->target_node_];
+              collected_tasks[op->target_node_];
+            }
+
+            leaf_ops_[op->target_node_].push_back(op);
+            collected_tasks[op->target_node_].push_back(op);
           }
 #ifdef PROFILE
           STAT.add_stat(worker_id_, "stage1", CycleTimer::currentTicks() - s1_bt);
@@ -1406,7 +1419,7 @@ namespace palmtree {
           // have been handled by workers whose worker_id is less than me.
           // Currently we use a unordered_map to record the ownership of tasks upon
           // certain nodes.
-          std::unordered_map<Node *, std::vector<TreeOp *>> collected_tasks;
+
           redistribute_leaf_tasks(collected_tasks);
           resolve_hazards(collected_tasks);
           DLOG_IF(INFO, worker_id_ == 0) << "resolved hazards";
@@ -1555,7 +1568,7 @@ namespace palmtree {
 
       STAT = Stats(NUM_WORKER);
       
-      STAT.init_metric("fetch_batch");
+      STAT.init_metric("batch_sort");
       STAT.init_metric("stage0");
       STAT.init_metric("stage1");
       STAT.init_metric("redist_leaf");
