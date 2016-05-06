@@ -8,6 +8,7 @@
 #include <boost/thread/locks.hpp>
 #include <boost/thread/shared_mutex.hpp>
 #include <glog/logging.h>
+#include <atomic>
 #include "immintrin.h"
 
 #define UNUSED __attribute__((unused))
@@ -40,6 +41,7 @@ public:
     ptr->lock_shared();
     for (;;) {
       CHECK(ptr->slot_used > 0) << "Search empty inner node";
+
       auto idx = this->search_inner(ptr->keys, ptr->slot_used, key);
       CHECK(idx != -1) << "search innerNode fail";
       CHECK(key_less(ptr->keys[idx], key) || key_eq(ptr->keys[idx], key));
@@ -70,7 +72,31 @@ public:
   }
 
   void insert(KeyType UNUSED key, ValueType UNUSED val) {
+    root->lock_exclusive();
 
+    auto new_child = insert_inner((InnerNode *)root, key, val);
+
+    if(new_child == nullptr) {
+      root->unlock_execlusive();
+      return;
+    }
+
+    auto new_root = new InnerNode(nullptr, root->level + 1);
+    root->parent = new_root;
+    new_child->parent = new_root;
+
+    add_item_inner(new_root, root->keys[0], root);
+    add_item_inner(new_root, ((InnerNode *)new_child)->keys[0], new_child);
+
+    root = new_root;
+    root->values[0]->unlock_execlusive();
+  }
+
+  void test() {
+    root->upgrade_lock();
+    std::cout << "lock shared" << std::endl;
+    root->upgrade_lock();
+    std::cout << "lock exclusive" << std::endl;
   }
 
 private:
@@ -102,7 +128,26 @@ private:
       lock.unlock_shared();
     }
 
-    boost::shared_mutex lock;
+    void lock_exclusive() {
+      lock.lock();
+    }
+
+    void unlock_execlusive() {
+      lock.unlock();
+    }
+
+    // upgrade to exclusive lock
+    void upgrade_lock() {
+      lock.lock_upgrade();
+    }
+
+    // downgrade to shared lock
+    void downgrade_lock() {
+      lock.unlock_and_lock_shared();
+    }
+
+
+    boost::upgrade_mutex lock;
     virtual ~Node() {};
     virtual std::string to_string() = 0;
     virtual NodeType type() const = 0;
@@ -260,7 +305,14 @@ private:
   void add_item_inner(InnerNode *node, KeyType key, Node *value) {
     // add item to inner node
     // ensure it's order
-    DLOG(INFO) << "search inner begin";
+
+    if(node->slot_used == 0) {
+      node->keys[0] = key;
+      node->values[0] = value;
+      node->slot_used++;
+      return;
+    }
+
     auto idx = search_inner(node->keys, node->slot_used, key);
 
     CHECK(idx != -1) << "search innerNode fail" << key <<" " <<node->keys[0];
@@ -269,7 +321,6 @@ private:
       CHECK(key_less(key, node->keys[idx + 1])) << "search inner fail";
     }
 
-    DLOG(INFO) << "search inner end";
     auto k = key;
     auto v = value;
 
@@ -281,6 +332,155 @@ private:
     node->keys[node->slot_used] = k;
     node->values[node->slot_used] = v;
     node->slot_used++;
+  }
+
+  Node *insert_leaf(LeafNode *node, KeyType key, ValueType value) {
+    // assume we hold the exclusive lock of leaf
+
+
+    // node not full
+    // simple add item to leaf
+    if(!node->is_full()) {
+      add_item_leaf(node, key, value);
+      return nullptr;
+    }
+
+    // otherwise, firstly buff all elements
+    std::vector<std::pair<KeyType, ValueType>> buff;
+    for(int i = 0; i < node->slot_used; i++) {
+      buff.push_back(std::make_pair(node->keys[i], node->values[i]));
+    }
+    buff.push_back(std::make_pair(key, value));
+
+
+    // sort
+    std::sort(buff.begin(), buff.end(), [this](const std::pair<KeyType, ValueType> &p1, const std::pair<KeyType, ValueType> &p2) {
+      return key_less(p1.first, p2.first);
+    });
+
+
+    // split into 2 parts
+    // store the second half to new node
+    auto half = buff.size() / 2;
+    auto itr = buff.begin();
+    node->slot_used = 0;
+    for(int i = 0; i < half; i++) {
+      add_item_leaf(node, itr->first, itr->second);
+      itr++;
+    }
+
+    auto new_child = new LeafNode(node->parent, 0);
+
+    while(itr != buff.end()) {
+      add_item_leaf(new_child, itr->first, itr->second);
+      itr++;
+    }
+
+
+    // return the new node to upper layer
+    return new_child;
+  }
+
+  Node *insert_inner(InnerNode *node, KeyType key, ValueType value) {
+    // assume we hold the exclusive lock before entering this function
+
+    // firstly, find the child to insert
+    auto idx = search_inner(node->keys, node->slot_used, key);
+    CHECK(idx != -1)  << "search fail";
+    auto child = node->values[idx];
+    Node *new_child = nullptr;
+    if(child->type() == LEAFNODE) {
+      child->lock_exclusive();
+      new_child = insert_leaf((LeafNode *)child, key, value);
+    }else {
+      // child->lock_shared();
+      child->lock_exclusive();
+      new_child = insert_inner((InnerNode *)child, key, value);
+    }
+
+    // child not split
+    if(new_child == nullptr) {
+      child->unlock_execlusive();
+      return nullptr;
+    }
+
+    // child split
+    KeyType new_key;
+    if(new_child->type() == LEAFNODE) {
+      new_key = ((LeafNode *)new_child)->keys[0];
+    }else{
+      new_key = ((InnerNode *)new_child)->keys[0];
+    }
+
+    // node not split
+    if(!node->is_full()) {
+      add_item_inner(node, new_key, new_child);
+      child->unlock_execlusive();
+      return nullptr;
+    }
+
+    // node also need split
+
+    // lock all children
+    for(int i = 0; i < node->slot_used; i++) {
+      if(node->values[i] != child) {
+        node->values[i]->lock_exclusive();
+      }
+    }
+
+
+    // buff all elements
+    std::vector<std::pair<KeyType, Node *>> buff;
+    for(int i = 0; i < node->slot_used; i++) {
+      buff.push_back(std::make_pair(node->keys[i], node->values[i]));
+    }
+    buff.push_back(std::make_pair(new_key, new_child));
+
+
+    // sort
+    std::sort(buff.begin(), buff.end(), [this](const std::pair<KeyType, Node *> &p1, const std::pair<KeyType, Node *> &p2) {
+      return key_less(p1.first, p2.first);
+    });
+
+
+    // store half
+    auto half = buff.size() / 2;
+    auto itr = buff.begin();
+    node->slot_used = 0;
+    for(int i = 0; i < half; i++) {
+      node->keys[i] = itr->first;
+      node->values[i] = itr->second;
+      node->slot_used++;
+      itr++;
+    }
+
+    // new node store another half
+    auto new_inner = new InnerNode(node->parent, node->level);
+
+    int i = 0;
+    while(itr != buff.end()) {
+      new_inner->keys[i] = itr->first;
+      new_inner->values[i] = itr->second;
+      new_inner->slot_used++;
+      itr->second->parent = new_inner;
+      itr++;
+      i++;
+    }
+
+
+    // unlock children
+    for(int i = 0; i < node->slot_used; i++) {
+      if(node->values[i] != new_child) {
+        node->values[i]->unlock_execlusive();
+      }
+    }
+
+    for(int i = 0; i < new_inner->slot_used; i++) {
+      if(new_inner->values[i] != new_child) {
+        new_inner->values[i]->unlock_execlusive();
+      }
+    }
+    return new_inner;
   }
 
   InnerNode *root;
