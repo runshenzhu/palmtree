@@ -1,7 +1,63 @@
 #include <iostream>
 #include <glog/logging.h>
 #include "fineTree.h"
+#include "../CycleTimer.h"
 using namespace std;
+
+class fast_random {
+public:
+  fast_random(unsigned long seed) : seed(0) { set_seed0(seed); }
+
+  inline unsigned long next() {
+    return ((unsigned long)next(32) << 32) + next(32);
+  }
+
+  inline uint32_t next_u32() { return next(32); }
+
+  inline uint16_t next_u16() { return (uint16_t)next(16); }
+
+  /** [0.0, 1.0) */
+  inline double next_uniform() {
+    return (((unsigned long)next(26) << 27) + next(27)) / (double)(1L << 53);
+  }
+
+  inline char next_char() { return next(8) % 256; }
+
+  inline char next_readable_char() {
+    static const char readables[] =
+      "0123456789@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+    return readables[next(6)];
+  }
+
+  inline std::string next_string(size_t len) {
+    std::string s(len, 0);
+    for (size_t i = 0; i < len; i++) s[i] = next_char();
+    return s;
+  }
+
+  inline std::string next_readable_string(size_t len) {
+    std::string s(len, 0);
+    for (size_t i = 0; i < len; i++) s[i] = next_readable_char();
+    return s;
+  }
+
+  inline unsigned long get_seed() { return seed; }
+
+  inline void set_seed(unsigned long seed) { this->seed = seed; }
+
+private:
+  inline void set_seed0(unsigned long seed) {
+    this->seed = (seed ^ 0x5DEECE66DL) & ((1L << 48) - 1);
+  }
+
+  inline unsigned long next(unsigned int bits) {
+    seed = (seed * 0x5DEECE66DL + 0xBL) & ((1L << 48) - 1);
+    return (unsigned long)(seed >> (48 - bits));
+  }
+
+  unsigned long seed;
+};
+
 
 int main() {
   cout << "Hello, World!" << endl;
@@ -9,6 +65,7 @@ int main() {
   fineTree<int, int> fTree(0xffffffff);
 
   auto entry_count = 1024 * 512;
+  auto read_count = 1024*1024*1;
   int *buff = new int[entry_count];
   for(int i = 0; i < entry_count; i++) {
     buff[i] = i;
@@ -21,14 +78,18 @@ int main() {
     fTree.insert(kv, kv);
   }
 
-  for(int j = 0; j < entry_count; j++) {
-    int value;
-    auto res = fTree.search(j, value);
-    CHECK(res == 0) << "search fail";
-    CHECK(value == j) << "search fail";
+  fast_random rng(time(0));
+  auto start = CycleTimer::currentSeconds();
+  for (int i = 0; i < read_count; i++) {
+    int rand_key = rng.next_u32() % entry_count;
+    int val;
+    auto res = fTree.search(rand_key, val);
+    if(res != 0 || val != rand_key) {
+      LOG(FATAL) << "search fail";
+    }
   }
-
-  LOG(INFO) << "test end";
+  auto end = CycleTimer::currentSeconds();
+  LOG(INFO) << "fineTree run for " << end-start << "s, " << "thput:" << std::fixed << read_count/(end-start)/1000 << " K rps";
 
   delete buff;
 }
