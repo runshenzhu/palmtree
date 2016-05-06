@@ -1082,50 +1082,65 @@ namespace palmtree {
       void collect_batch() {
         DLOG(INFO) << "Thread " << worker_id_ << " collect tasks " << palmtree_->BATCH_SIZE;
 
-        int sleep_time = 0;
-        while (sleep_time < 1024) {
+        if (worker_id_ == 0) {
+          int sleep_time = 0;
+          while (sleep_time < 1024) {
 
-          bool res = palmtree_->task_batch_queue_.pop(palmtree_->current_batch_);
-          if (res) {
-            break;
-          } else {
-            DLOG(INFO) << sleep_time;
-            sleep_time ++;
+            bool res = palmtree_->task_batch_queue_.pop(palmtree_->current_batch_);
+            if (res) {
+              break;
+            } else {
+              DLOG(INFO) << sleep_time;
+              sleep_time ++;
+            }
           }
+          // DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_->size();  
         }
 
-        if (palmtree_->current_batch_ == nullptr)
+         palmtree_->sync(worker_id_);    
+
+        if (palmtree_->current_batch_ == nullptr) {
           return;
+        }
         
-        if (palmtree_->current_batch_->size() == 0)
+        if (palmtree_->current_batch_->size() == 0) {
           return;
+        }
 
-        DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_->size();
-
-        auto bt = CycleTimer::currentTicks();
+        // auto bt = CycleTimer::currentTicks();
         // firstly sort the batch
         // std::sort(palmtree_->current_batch_.begin(), palmtree_->current_batch_.end(), [this](const TreeOp *op1, const TreeOp *op2) {
             // return palmtree_->key_less(op1->key_, op2->key_);
         // });
-        STAT.add_stat(worker_id_, "batch_sort", CycleTimer::currentTicks() - bt);
+        // STAT.add_stat(worker_id_, "batch_sort", CycleTimer::currentTicks() - bt);
 
         // Partition the task among threads
         int batch_size = palmtree_->current_batch_->size();
         int task_per_thread = batch_size / palmtree_->NUM_WORKER;
         int task_residue = batch_size - task_per_thread * palmtree_->NUM_WORKER;
-        int worker_id = 0;
 
-        int i;
-        for (i = 0; i < batch_size; worker_id++) {
-          int ntask = task_per_thread + (task_residue > 0 ? 1 : 0);
+        int lower = task_per_thread * worker_id_ + std::min(task_residue, worker_id_);
+        int upper = lower + task_per_thread + (worker_id_ < task_residue);
 
-          for (int j = i; j < i+ntask; j++)
-            palmtree_->workers_[worker_id].current_tasks_
-              .push_back(palmtree_->current_batch_->get_op(j));
-          i += ntask;
-          task_residue--;
+        DLOG(INFO) << worker_id_ << " got " << lower << " to " << upper << " tasks";
+        for (int i = lower; i < upper; i++) {
+          palmtree_->workers_[worker_id_].current_tasks_
+              .push_back(palmtree_->current_batch_->get_op(i));
         }
-        CHECK(i == batch_size) << "Not all work distributed";
+
+        // int worker_id = 0;
+
+        // int i;
+        // for (i = 0; i < batch_size; worker_id++) {
+        //   int ntask = task_per_thread + (task_residue > 0 ? 1 : 0);
+
+        //   for (int j = i; j < i+ntask; j++)
+        //     palmtree_->workers_[worker_id].current_tasks_
+        //       .push_back(palmtree_->current_batch_->get_op(j));
+        //   i += ntask;
+        //   task_residue--;
+        // }
+        // CHECK(i == batch_size) << "Not all work distributed";
       }
 
       // Redistribute the tasks on leaf node
@@ -1322,17 +1337,16 @@ namespace palmtree {
           // Stage 0, collect work batch and partition
           CycleTimer::SysClock start_tick = CycleTimer::currentTicks();
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 0: collect tasks";
+          collect_batch();
           if (worker_id_ == 0) {
-            CycleTimer::SysClock st = CycleTimer::currentTicks();
-            collect_batch();
             // Check if the tree is destroyed, we must do it before the sync point
             if (palmtree_->destroyed_) {
               for (int i = 0; i < palmtree_->NUM_WORKER; i++)
                 palmtree_->workers_[i].done_ = true;
             };
-            CycleTimer::SysClock passed = CycleTimer::currentTicks() - st;
-            STAT.add_stat(worker_id_, "collect_batch", passed);
           }
+          CycleTimer::SysClock passed = CycleTimer::currentTicks() - start_tick;
+          STAT.add_stat(worker_id_, "stage0", passed);
           palmtree_->sync(worker_id_);
           if (done_)
             LOG(INFO) << "Worker " << worker_id_ << " exit";
@@ -1514,7 +1528,7 @@ namespace palmtree {
       STAT = Stats(NUM_WORKER);
       
       STAT.init_metric("batch_sort");
-      STAT.init_metric("collect_batch");
+      STAT.init_metric("stage0");
       STAT.init_metric("stage1");
       STAT.init_metric("stage2");
       STAT.init_metric("stage3");
