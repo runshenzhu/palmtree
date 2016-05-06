@@ -256,8 +256,9 @@ namespace palmtree {
         ops_ = (TreeOp *)malloc(sizeof(TreeOp) * capacity_);
       }
 
-      ~TaskBatch() {
+      void destroy() {
         free(ops_);
+        ops_ = nullptr;
       }
 
       // Add a tree operation to the batch
@@ -265,7 +266,7 @@ namespace palmtree {
         assert(ntask_ != capacity_);
 
         if (op_type == TREE_OP_INSERT) {
-          assert(valp != NULL);
+          assert(valp != nullptr);
           ops_[ntask_++] = TreeOp(op_type, *keyp, *valp);
         } else {
           ops_[ntask_++] = TreeOp(op_type, *keyp);
@@ -1081,7 +1082,6 @@ namespace palmtree {
       void collect_batch() {
         DLOG(INFO) << "Thread " << worker_id_ << " collect tasks " << palmtree_->BATCH_SIZE;
 
-        palmtree_->current_batch_ = nullptr;
         int sleep_time = 0;
         while (sleep_time < 1024) {
 
@@ -1456,14 +1456,20 @@ namespace palmtree {
           STAT.add_stat(worker_id_, "dec task num", CycleTimer::currentTicks() - st3);
 
           current_tasks_.clear();
-
 #ifdef PROFILE
           STAT.add_stat(worker_id_, "stage4", CycleTimer::currentTicks() - s4_bt);
 #endif
           palmtree_->sync(worker_id_);
 
-          // Free the batch
-          free(palmtree_->current_batch_);
+          // Free the current batch
+          
+          if (worker_id_ == 0 && palmtree_->current_batch_ != nullptr) {
+            DLOG(INFO) << "Free the current batch";
+            palmtree_->current_batch_->destroy();
+            free(palmtree_->current_batch_);
+            palmtree_->current_batch_ = nullptr;
+            DLOG(INFO) << "Free-ed";
+          }
             
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4 finished";
 
@@ -1500,6 +1506,7 @@ namespace palmtree {
       layer_width_.push_back(new std::atomic<int>(1));
       layer_width_.push_back(new std::atomic<int>(1));
       // Init current batch
+      current_batch_ = nullptr;
       tree_current_batch_ = (TaskBatch *)malloc(sizeof(TaskBatch));
       new (tree_current_batch_) TaskBatch(BATCH_SIZE);
       // Init stats
@@ -1567,8 +1574,10 @@ namespace palmtree {
 
       free_recursive(tree_root);
 
-      if (tree_current_batch_ != nullptr)
+      if (tree_current_batch_ != nullptr) {
+        tree_current_batch_->destroy();
         free(tree_current_batch_);
+      }
     }
 
     /**
@@ -1577,7 +1586,7 @@ namespace palmtree {
      * @return nullptr if no such k,v pair
      */
     bool find(const KeyType &key UNUSED, ValueType &value UNUSED) {
-      push_task(TREE_OP_FIND, &key, NULL);
+      push_task(TREE_OP_FIND, &key, nullptr);
 
       // op.wait();
       //if (op.boolean_result_)
@@ -1601,7 +1610,7 @@ namespace palmtree {
      * @brief remove a k,v from the tree
      */
     void remove(const KeyType &key UNUSED) {
-      push_task(TREE_OP_REMOVE, &key, NULL);
+      push_task(TREE_OP_REMOVE, &key, nullptr);
 
       // op->wait();
     }
