@@ -73,7 +73,7 @@ namespace palmtree {
         for (int i = 0; i < worker_num_; i++) {
           if (metric_name == "leaf_task") {
             line += "\t" + std::to_string(i) + ": " + std::to_string(values[i]);
-            
+
           } else {
             line += "\t" + std::to_string(i) + ": " + std::to_string(values[i] * CycleTimer::secondsPerTick());
           }
@@ -247,7 +247,7 @@ namespace palmtree {
 
     /**
      * A batch of tree operations, this data structure is not thread safe
-     * The major goal of this class is to amortize memory allocation of 
+     * The major goal of this class is to amortize memory allocation of
      * tree operations
      */
     class TaskBatch {
@@ -1095,16 +1095,16 @@ namespace palmtree {
               sleep_time ++;
             }
           }
-          STAT.add_stat(0, "fetch_batch", CycleTimer::currentTicks() - bt);
-          // DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_->size();  
+          // STAT.add_stat(0, "fetch_batch", CycleTimer::currentTicks() - bt);
+          // DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_->size();
         }
 
-        palmtree_->sync(worker_id_);    
+        palmtree_->sync(worker_id_);
 
         if (palmtree_->current_batch_ == nullptr) {
           return;
         }
-        
+
         if (palmtree_->current_batch_->size() == 0) {
           return;
         }
@@ -1517,7 +1517,7 @@ namespace palmtree {
           palmtree_->sync(worker_id_);
 
           // Free the current batch
-          
+
           if (worker_id_ == 0 && palmtree_->current_batch_ != nullptr) {
             DLOG(INFO) << "Free the current batch";
             palmtree_->current_batch_->destroy();
@@ -1525,7 +1525,7 @@ namespace palmtree {
             palmtree_->current_batch_ = nullptr;
             DLOG(INFO) << "Free-ed";
           }
-            
+
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4 finished";
 
           CycleTimer::SysClock end_tick = CycleTimer::currentTicks();
@@ -1544,9 +1544,9 @@ namespace palmtree {
     std::atomic<int> task_nums;
 
     PalmTree(KeyType min_key, int num_worker):
-      tree_depth_(1), 
-      destroyed_(false), 
-      min_key_(min_key), 
+      tree_depth_(1),
+      destroyed_(false),
+      min_key_(min_key),
       barrier_(num_worker),
       task_batch_queue_{1024*500}
     {
@@ -1567,7 +1567,7 @@ namespace palmtree {
       // Init stats
 
       STAT = Stats(NUM_WORKER);
-      
+
       STAT.init_metric("batch_sort");
       STAT.init_metric("stage0");
       STAT.init_metric("stage1");
