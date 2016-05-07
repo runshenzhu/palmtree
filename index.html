@@ -22,10 +22,6 @@
       <h1>
 <a id="final-write-up" class="anchor" href="#final-write-up" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Final write up</h1>
 
-<pre><code>Ran Xian (rxian@cs.cmu.edu)
-Runshen Zhu (runshenz@andrew.cmu.edu)
-</code></pre>
-
 <h3>
 <a id="summary" class="anchor" href="#summary" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Summary:</h3>
 
@@ -73,15 +69,15 @@ Runshen Zhu (runshenz@andrew.cmu.edu)
 </ul>
 
 <h3>
-<a id="approach" class="anchor" href="#approach" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Approach</h3>
+<a id="approach" class="anchor" href="#approach" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Approach:</h3>
 
 <h4>
-<a id="approach-1" class="anchor" href="#approach-1" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Approach #1</h4>
+<a id="approach-1-coarse-grained-locking" class="anchor" href="#approach-1-coarse-grained-locking" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Approach #1: Coarse Grained Locking</h4>
 
 <p>There are several ways to implement a concurrent B+Tree. The easiest one is to have a coarse grained lock to protect the tree, for example we can use a shared lock to support <code>find()</code>, <code>delete()</code> and <code>insert()</code>. The strategy is simple, <code>find()</code> can take a read lock, as it won’t change the structure of the tree. <code>delete()</code> and <code>insert()</code> need to take a write lock, because it will modify the tree. The advantage of coarse grained locking is its simplism, but it is often not the optimal solution since <code>find()</code> will block <code>delete()</code> and <code>insert()</code>, <code>delete()</code> and <code>insert()</code> will block all other operations on the tree.</p>
 
 <h4>
-<a id="approach-2" class="anchor" href="#approach-2" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Approach #2</h4>
+<a id="approach-2-fine-grained-locking" class="anchor" href="#approach-2-fine-grained-locking" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Approach #2: Fine Grained Locking</h4>
 
 <p>The second approach is to use fine grained locking to protect the tree data structure. One viable way is to use some sort of hand-over-hand locking when searching down the tree, and lock the corresponding nodes before the tree structure is modified. In this project, to compare with our lock free implmenetation, we also designed and implemented a fine grained locking B+Tree: </p>
 
@@ -95,7 +91,7 @@ Runshen Zhu (runshenz@andrew.cmu.edu)
 <p>The disadvantage of this approach is that writers will still block readers. The writers will take an exclusive path on the tree, meaning that no other operations are possibly happen at the same time. </p>
 
 <h4>
-<a id="approach-3" class="anchor" href="#approach-3" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Approach #3</h4>
+<a id="approach-3-lock-free" class="anchor" href="#approach-3-lock-free" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Approach #3: Lock Free</h4>
 
 <p>Approach #1 and #2 both used lock to protect the data strucutre. In both cases, writers will block readers and other writers. It is more soundable to implement a lock free B+Tree that both readers and writers can proceed without blocking each other. One of such example is Palm Tree. Palm Tree is a lock free concurrent B+Tree proposed by Intel in [1], it features a Bulk Synchronized Parallism (BSP) approach to bulkly perform B+Tree operations and resolve hazards gracefully. The main contribution of this project is an efficient implementation of Palm Tree.</p>
 
@@ -118,7 +114,7 @@ Runshen Zhu (runshenz@andrew.cmu.edu)
 <p>During the upwards operations, within each layer the task needs to be re-distributed to ensure correctness and leverages parallisms. Palm Tree's partition algorithm is as follows: for each worker thread, it records all the nodes it has accessed in the lower level, then dicards all nodes that have been accessed by a worker with a lower worker id (each worker is assigned a worker id from 0~<code>WORKER_NUM</code>). One drawbacks of such approach would be workload imbalance, as the worker with lower id has privilege over other workers.</p>
 
 <h3>
-<a id="optimizations" class="anchor" href="#optimizations" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Optimizations</h3>
+<a id="optimizations" class="anchor" href="#optimizations" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Optimizations:</h3>
 
 <ul>
 <li><p>The first optimization we made is to pre-sort the queries in a batch,  and assign them to threads in an ordered way. We will see below that pre-sort can benifit task distribution process, here the main benift is load balancing. If the batch is pre-sorted, each worker thread will be assigned a range of queries, and they will reach leaf layer with properly ordered leaf nodes. Comparing to random assignment of tasks, the 0th worker may end up with many leaf nodes, potentially have more work than others due to the task distribution policy.</p></li>
@@ -135,7 +131,7 @@ Runshen Zhu (runshenz@andrew.cmu.edu)
 </ul>
 
 <h3>
-<a id="results" class="anchor" href="#results" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>results</h3>
+<a id="results" class="anchor" href="#results" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Results:</h3>
 
 <p>The platform we run our evaluation on:</p>
 
@@ -156,26 +152,20 @@ Runshen Zhu (runshenz@andrew.cmu.edu)
 <p>Then the huge performance gain is from reducing the communciation overhead. We first implemented a customized profiler to collect running time of different stages of the system. As can be seen from the log output when profing on 4 workers and 8 workers Palm Tree, we found that batch collection (Stage 0) and result distribution (Stage 4) is not scalable, mainly because it is only done by the 0th worker by design.</p>
 
 <pre><code>I0505 01:02:58.919889 70461 palmtree.h:63] [collect_batch]
-I0505 01:02:58.919924 70461 palmtree.h:68] 0: 1.06791
+I0505 01:02:58.919924 70461 palmtree.h:68] 0: 1.06791      &lt;=
 I0505 01:02:58.919939 70461 palmtree.h:68] 1: 0
 I0505 01:02:58.919947 70461 palmtree.h:68] 2: 0
-I0505 01:02:58.919955 70461 palmtree.h:68] 3: 0
-I0505 01:02:58.919965 70461 palmtree.h:68] 4: 0
-I0505 01:02:58.919972 70461 palmtree.h:68] 5: 0
+...
 I0505 01:02:58.920054 70461 palmtree.h:63] [end_stage]
-I0505 01:02:58.920061 70461 palmtree.h:68] 0: 1.09612
+I0505 01:02:58.920061 70461 palmtree.h:68] 0: 1.09612      &lt;=
 I0505 01:02:58.920070 70461 palmtree.h:68] 1: 0
 I0505 01:02:58.920078 70461 palmtree.h:68] 2: 0
-I0505 01:02:58.920086 70461 palmtree.h:68] 3: 0
-I0505 01:02:58.920094 70461 palmtree.h:68] 4: 0
-I0505 01:02:58.920102 70461 palmtree.h:68] 5: 0
+...
 I0505 01:02:58.920110 70461 palmtree.h:63] [total_time]
 I0505 01:02:58.920117 70461 palmtree.h:68] 0: 3.12207
 I0505 01:02:58.920125 70461 palmtree.h:68] 1: 3.12296
 I0505 01:02:58.920133 70461 palmtree.h:68] 2: 3.1128
-I0505 01:02:58.920142 70461 palmtree.h:68] 3: 3.12027
-I0505 01:02:58.920150 70461 palmtree.h:68] 4: 3.12045
-I0505 01:02:58.920158 70461 palmtree.h:68] 5: 3.12035
+...
 </code></pre>
 
 <p>To fix this problem, we let each thread calculate its own task ranges in the batch, and fetches the task without communicating with others, and hence there is not 0th worker's responsibility to distribute the batch tasks. When the task is finished, the worker threads are responsible for returning the results back cooperatively, instead of all done by 0th worker.</p>
@@ -202,17 +192,17 @@ I0505 01:02:58.920158 70461 palmtree.h:68] 5: 3.12035
 
 <p><img src="https://raw.githubusercontent.com/runshenzhu/618-final/1eb0c987a02101f5a749826b43cf9221b356a176/decomp.png" width="100%"></p>
 
-<h3>
-<a id="references" class="anchor" href="#references" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>References</h3>
+<h4>
+<a id="references" class="anchor" href="#references" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>References:</h4>
 
 <p>[1] J. Sewall, J. Chhugani, C. Kim, N. Satish, and P. Dubey. PALM: Parallel architecture-friendly latch-free modifications to B+ trees on many-core processors. Proc. VLDB Endowment, 4(11):795--806, August 2011.</p>
 
 <p>[2] David B. Lomet, Sudipta Sengupta, and Justin J. Levandoski. 2013. The Bw-Tree: A B-tree for new hardware platforms. In Proceedings of the 2013 IEEE International Conference on Data Engineering (ICDE 2013) (ICDE '13). IEEE Computer Society, Washington, DC, USA, 302-313. DOI=<a href="http://dx.doi.org/10.1109/ICDE.2013.6544834">http://dx.doi.org/10.1109/ICDE.2013.6544834</a></p>
 
-<h3>
-<a id="work-partition" class="anchor" href="#work-partition" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Work partition</h3>
+<h4>
+<a id="work-partition" class="anchor" href="#work-partition" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Work Partition:</h4>
 
-<p>equal work was performed by both project members.</p>
+<p>Equal work was performed by both project members.</p>
 
 <hr>
 
