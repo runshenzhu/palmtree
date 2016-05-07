@@ -1552,7 +1552,7 @@ namespace palmtree {
       NUM_WORKER = num_worker;
       BATCH_SIZE = BATCH_SIZE_PER_WORKER * NUM_WORKER;
 
-      cout << "init palm tree with " << NUM_WORKER << " workers" << endl;
+      LOG(INFO) << "init palm tree with " << NUM_WORKER << " workers";
       // Init the root node
       tree_root = new InnerNode(nullptr, 1);
       add_item<InnerNode, Node *>((InnerNode *)tree_root, min_key_, new LeafNode(tree_root, 0));
