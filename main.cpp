@@ -232,8 +232,8 @@ void readonly_uniform(size_t entry_count, size_t op_count, bool run_std_map = fa
   LOG(INFO) << palmtreep->task_nums << " left";
   palmtreep->wait_finish();
   double end = CycleTimer::currentSeconds();
-  LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << op_count/(end-start)/1000 << " K rps";
-  double runtime = end-start;
+  LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << 2 * op_count/(end-start)/1000 << " K rps";
+  double runtime = (end-start) / 2;
 
   if (run_std_map) {
     LOG(INFO) << "Running std map";
@@ -241,17 +241,19 @@ void readonly_uniform(size_t entry_count, size_t op_count, bool run_std_map = fa
     for (size_t i = 0; i < entry_count; i++)
       map.insert(std::make_pair(i, i));
 
+    pthread_rwlock_t lock_rw = PTHREAD_RWLOCK_INITIALIZER;
+    pthread_rwlock_t *l = &lock_rw;
+
     auto map_p = &map;
     start = CycleTimer::currentSeconds();
     std::vector<std::thread> threads;
 
-    pthread_rwlock_t lock_rw = PTHREAD_RWLOCK_INITIALIZER;
-    pthread_rwlock_t *l = &lock_rw;
 
-    for(int i = 0; i < worker_num; i++) {
-      threads.push_back(std::thread([map_p, op_count, entry_count, l]() {
+    auto w_n = worker_num;
+    for(int i = 0; i < w_n; i++) {
+      threads.push_back(std::thread([map_p, op_count, entry_count, l, w_n]() {
         fast_random rng(time(0));
-        for (size_t i = 0; i < op_count / worker_num; i++) {
+        for (size_t i = 0; i < op_count / w_n; i++) {
           int rand_key = rng.next_u32() % entry_count;
           pthread_rwlock_rdlock(l);
           map_p->find(rand_key);
@@ -279,10 +281,10 @@ void readonly_uniform(size_t entry_count, size_t op_count, bool run_std_map = fa
 
     start = CycleTimer::currentSeconds();
     auto stx_p = &stx_map;
-    for(int i = 0; i < worker_num; i++) {
-      threads.push_back(std::thread([stx_p, op_count, entry_count, l]() {
+    for(int i = 0; i < w_n; i++) {
+      threads.push_back(std::thread([stx_p, op_count, entry_count, l, w_n]() {
         fast_random rng(time(0));
-        for (size_t i = 0; i < op_count / worker_num; i++) {
+        for (size_t i = 0; i < op_count / w_n; i++) {
           int rand_key = rng.next_u32() % entry_count;
           pthread_rwlock_rdlock(l);
           stx_p->find(rand_key);
@@ -303,8 +305,8 @@ void readonly_uniform(size_t entry_count, size_t op_count, bool run_std_map = fa
 
 void readonly_skew(size_t entry_count, size_t op_count, bool run_std_map = false) {
   LOG(INFO) << "Begin palmtree read only benchmark";
-  // palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min(), worker_num);
-  palmtree::PalmTree<int, int> *palmtreep = new palmtree::PalmTree<int, int>(std::numeric_limits<int>::min(), worker_num);
+  palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min(), worker_num);
+  palmtree::PalmTree<int, int> *palmtreep = &palmtree;
 
   populate_palm_tree(palmtreep, entry_count);
   // Reset the metrics
@@ -338,10 +340,8 @@ void readonly_skew(size_t entry_count, size_t op_count, bool run_std_map = false
   LOG(INFO) << palmtreep->task_nums << " left";
   palmtreep->wait_finish();
   double end = CycleTimer::currentSeconds();
-  LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << op_count/(end-start)/1000 << " K rps";
-  double runtime = end-start;
-
-  delete palmtreep;
+  LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << 2 * op_count/(end-start)/1000 << " K rps";
+  double runtime = (end-start) / 2;
 
   if (run_std_map) {
     LOG(INFO) << "Running std map";
@@ -349,16 +349,36 @@ void readonly_skew(size_t entry_count, size_t op_count, bool run_std_map = false
     for (size_t i = 0; i < entry_count; i++)
       map.insert(std::make_pair(i, i));
 
+    pthread_rwlock_t lock_rw = PTHREAD_RWLOCK_INITIALIZER;
+    pthread_rwlock_t *l = &lock_rw;
+
+    auto map_p = &map;
     start = CycleTimer::currentSeconds();
-    for (size_t i = 0; i < op_count; i++) {
-      int rand_key = rng.next_u32() % entry_count;
-      map.find(rand_key);
+    std::vector<std::thread> threads;
+
+
+    auto w_n = worker_num;
+    for(int i = 0; i < w_n; i++) {
+      threads.push_back(std::thread([map_p, op_count, entry_count, l, w_n]() {
+        fast_random rng(time(0));
+        for (size_t i = 0; i < op_count / w_n; i++) {
+          int rand_key = rng.next_u32() % entry_count;
+          pthread_rwlock_rdlock(l);
+          map_p->find(rand_key);
+          pthread_rwlock_unlock(l);
+        }
+      }));
+    }
+
+    for(auto &t : threads) {
+      t.join();
     }
     end = CycleTimer::currentSeconds();
     LOG(INFO) << "std::map run for " << end-start << "s, " << "thput:" << std::fixed << op_count/(end-start)/1000 << " K rps";
-
     double runtime_ref = end-start;
     LOG(INFO) << "SPEEDUP over std map: " << runtime_ref / runtime << " X";
+
+    threads.clear();
 
     // stx
     LOG(INFO) << "Running stx map";
@@ -366,24 +386,38 @@ void readonly_skew(size_t entry_count, size_t op_count, bool run_std_map = false
     for (size_t i = 0; i < entry_count; i++)
       stx_map.insert(std::make_pair(i, i));
 
-    // rng(time(0));
     start = CycleTimer::currentSeconds();
-    for (size_t i = 0; i < op_count; i++) {
-      int rand_key = rng.next_u32() % entry_count;
-      stx_map.find(rand_key);
+    auto stx_p = &stx_map;
+    for(int i = 0; i < w_n; i++) {
+      threads.push_back(std::thread([stx_p, op_count, entry_count, l, w_n]() {
+        fast_random rng(time(0));
+        for (size_t i = 0; i < op_count / w_n; i++) {
+          int rand_key = rng.next_u32() % entry_count;
+          pthread_rwlock_rdlock(l);
+          stx_p->find(rand_key);
+          pthread_rwlock_unlock(l);
+        }
+      }));
     }
+
+    for(auto &t : threads) {
+      t.join();
+    }
+
     end = CycleTimer::currentSeconds();
     LOG(INFO) << "stx map run for " << end-start << "s, " << "thput:" << std::fixed << op_count/(end-start)/1000 << " K rps";
 
+    runtime_ref = end-start;
+    LOG(INFO) << "SPEEDUP over PalmTree: " << runtime_ref / runtime << " X";
   }
 }
 
 
 
 void update_uniform(size_t entry_count, size_t op_count, bool run_std_map = false) {
-  LOG(INFO) << "Begin palmtree read only benchmark";
-  palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min(), worker_num);
-  palmtree::PalmTree<int, int> *palmtreep = &palmtree;
+  LOG(INFO) << "Begin palmtree update uniform benchmark";
+  // palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min(), worker_num);
+  palmtree::PalmTree<int, int> *palmtreep = new palmtree::PalmTree<int, int> (std::numeric_limits<int>::min(), worker_num);;
 
   populate_palm_tree(palmtreep, entry_count);
   // Reset the metrics
@@ -400,17 +434,15 @@ void update_uniform(size_t entry_count, size_t op_count, bool run_std_map = fals
   int one_step = 2 * entry_count / (palmtreep->batch_size()+1);
   int last_key = 0;
   int batch_task_count = 0;
-  int op_id = 0;
   for (size_t i = 0; i < op_count; i++) {
     last_key += rng.next_u32() % one_step;
     last_key %= entry_count;
     batch_task_count++;
-    op_id++;
-    if(op_id == 5) {
+    auto id = rng.next_uniform();
+    if(id < 0.1) {
       palmtreep->insert(last_key, last_key);
-    } else if(op_id == 10) {
-      palmtree.remove(last_key);
-      op_id = 0;
+    } else if(id < 0.2) {
+      palmtreep->remove(last_key);
     }else {
       int res;
       palmtreep->find(last_key, res);
@@ -425,34 +457,104 @@ void update_uniform(size_t entry_count, size_t op_count, bool run_std_map = fals
   LOG(INFO) << palmtreep->task_nums << " left";
   palmtreep->wait_finish();
   double end = CycleTimer::currentSeconds();
-  LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << op_count/(end-start)/1000 << " K rps";
-  double runtime = end-start;
+  LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << 2 * op_count/(end-start)/1000 << " K rps";
+  double runtime = (end-start) / 2;
+
+  delete palmtreep;
 
   if (run_std_map) {
     LOG(INFO) << "Running std map";
     std::map<int, int> map;
     for (size_t i = 0; i < entry_count; i++)
-      map.insert(std::make_pair(2 * i, 2 * i));
+      map.insert(std::make_pair(i, i));
+
+
+    pthread_rwlock_t lock_rw = PTHREAD_RWLOCK_INITIALIZER;
+    pthread_rwlock_t *l = &lock_rw;
+
 
     start = CycleTimer::currentSeconds();
-    op_id = 0;
-    for (size_t i = 0; i < op_count; i++) {
-      int rand_key = rng.next_u32() % entry_count;
-      op_id++;
-      if(op_id == 5) {
-        map[rand_key] = rand_key;
-      }else if (op_id == 10) {
-        map.erase(2 * rand_key);
-        op_id = 0;
-      }else {
-        map.find(rand_key);
-      }
+    auto map_p = &map;
+    start = CycleTimer::currentSeconds();
+    std::vector<std::thread> threads;
+
+    auto w_n = worker_num;
+    for(int i = 0; i < w_n; i++) {
+      threads.push_back(std::thread([map_p, op_count, entry_count, l, w_n]() {
+        fast_random rng(time(0));
+
+        auto map = *map_p;
+        for (size_t i = 0; i < op_count / w_n; i++) {
+          int rand_key = rng.next_u32() % entry_count;
+          auto id = rng.next_uniform();
+          if(id < 0.1) {
+            pthread_rwlock_wrlock(l);
+            map[rand_key] = rand_key;
+          }else if (id < 0.2) {
+            pthread_rwlock_wrlock(l);
+            map.erase(rand_key);
+          }else {
+            pthread_rwlock_rdlock(l);
+            map.find(rand_key);
+          }
+          pthread_rwlock_unlock(l);
+        }
+      }));
     }
+
+    for(auto &t : threads) {
+      t.join();
+    }
+
+    threads.clear();
+
     end = CycleTimer::currentSeconds();
     LOG(INFO) << "std::map run for " << end-start << "s, " << "thput:" << std::fixed << op_count/(end-start)/1000 << " K rps";
 
     double runtime_ref = end-start;
     LOG(INFO) << "SPEEDUP over PalmTree: " << runtime_ref / runtime << " X";
+
+    // stx
+    LOG(INFO) << "Running stx map";
+    stx::btree_map<int, int> stx_map;
+    for (size_t i = 0; i < entry_count; i++)
+      stx_map.insert(std::make_pair(i, i));
+
+    start = CycleTimer::currentSeconds();
+    auto stx_p = &stx_map;
+    for(int i = 0; i < w_n; i++) {
+      threads.push_back(std::thread([stx_p, op_count, entry_count, l, w_n]() {
+        fast_random rng(time(0));
+        auto stx = *stx_p;
+        for (size_t i = 0; i < op_count / w_n; i++) {
+          int rand_key = rng.next_u32() % entry_count;
+          auto id = rng.next_uniform();
+          if(id < 0.1) {
+            pthread_rwlock_wrlock(l);
+            stx.insert(rand_key, rand_key);
+          }else if (id < 0.2) {
+            pthread_rwlock_wrlock(l);
+            stx.erase(rand_key);
+          }else {
+            pthread_rwlock_rdlock(l);
+            stx.find(rand_key);
+          }
+
+          pthread_rwlock_unlock(l);
+        }
+      }));
+    }
+
+    for(auto &t : threads) {
+      t.join();
+    }
+
+    end = CycleTimer::currentSeconds();
+    LOG(INFO) << "stx map run for " << end-start << "s, " << "thput:" << std::fixed << op_count/(end-start)/1000 << " K rps";
+
+    runtime_ref = end-start;
+    LOG(INFO) << "SPEEDUP over PalmTree: " << runtime_ref / runtime << " X";
+
   }
 }
 
@@ -558,8 +660,8 @@ int main(int argc, char *argv[]) {
 
   auto insert = 1024 * 512;
   auto op_num = 1024 * 1024 * 100;
-  readonly_uniform(insert, op_num, c);
-  // update_uniform(insert, op_num, c);
+  // readonly_uniform(insert, op_num, c);
+  update_uniform(insert, op_num, c);
 
   return 0;
 }

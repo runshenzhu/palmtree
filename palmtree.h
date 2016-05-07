@@ -30,6 +30,7 @@ using std::endl;
 namespace palmtree {
 
   static std::atomic<int> NODE_NUM(0);
+  unsigned int batch_id = 0;
   /**
    * Tree operation types
    */
@@ -344,7 +345,7 @@ namespace palmtree {
     // into the batch queue.
     void push_task(TreeOpType op_type, const KeyType *keyp, const ValueType *valp) {
       tree_current_batch_->add_op(op_type, keyp, valp);
-      task_nums++;
+      task_nums += 2;
 
       if (tree_current_batch_->is_full()) {
         task_batch_queue_.push(tree_current_batch_);
@@ -1090,17 +1091,20 @@ namespace palmtree {
         DLOG(INFO) << "Thread " << worker_id_ << " collect tasks " << palmtree_->BATCH_SIZE;
 
         if (worker_id_ == 0) {
-          int sleep_time = 0;
-          while (sleep_time < 1024) {
+          if (batch_id % 2 == 0) {
+            int sleep_time = 0;
+            while (sleep_time < 1024) {
 
-            bool res = palmtree_->task_batch_queue_.pop(palmtree_->current_batch_);
-            if (res) {
-              break;
-            } else {
-              DLOG(INFO) << sleep_time;
-              sleep_time ++;
+              bool res = palmtree_->task_batch_queue_.pop(palmtree_->current_batch_);
+              if (res) {
+                break;
+              } else {
+                DLOG(INFO) << sleep_time;
+                sleep_time++;
+              }
             }
           }
+          batch_id++;
           // STAT.add_stat(0, "fetch_batch", CycleTimer::currentTicks() - bt);
           // DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_->size();
         }
@@ -1513,7 +1517,7 @@ namespace palmtree {
 
           // Free the current batch
 
-          if (worker_id_ == 0 && palmtree_->current_batch_ != nullptr) {
+          if (worker_id_ == 0 && batch_id % 2 == 0 && palmtree_->current_batch_ != nullptr) {
             DLOG(INFO) << "Free the current batch";
             palmtree_->current_batch_->destroy();
             free(palmtree_->current_batch_);
