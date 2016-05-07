@@ -102,9 +102,31 @@ public:
 private:
   KeyType min_key;
   // Max number of slots per inner node
-  static const int INNER_MAX_SLOT = 256;
+  static const int INNER_MAX_SLOT = 64;
   // Max number of slots per leaf node
-  static const int LEAF_MAX_SLOT = 64;
+  static const int LEAF_MAX_SLOT = 128;
+
+  class spinlock {
+  public:
+    spinlock() {
+      next_ticket = 0;
+      now_serving = 0;
+    }
+
+    void lock() {
+      auto my_ticket = next_ticket++;
+      while(my_ticket != now_serving) ;
+    }
+
+    void unlock() {
+      now_serving++;
+    }
+
+  private:
+    std::atomic<unsigned int> next_ticket;
+    std::atomic<unsigned int> now_serving;
+  };
+
 
   struct Node {
     // Number of actually used slots
@@ -121,11 +143,11 @@ private:
     };
 
     void lock_shared() {
-      lock.lock_shared();
+      lock.lock();
     }
 
     void unlock_shared() {
-      lock.unlock_shared();
+      lock.unlock();
     }
 
     void lock_exclusive() {
@@ -138,16 +160,17 @@ private:
 
     // upgrade to exclusive lock
     void upgrade_lock() {
-      lock.lock_upgrade();
+      lock.lock();
     }
 
     // downgrade to shared lock
     void downgrade_lock() {
-      lock.unlock_and_lock_shared();
+      lock.unlock();
     }
 
 
-    boost::upgrade_mutex lock;
+    // boost::upgrade_mutex lock;
+    spinlock lock;
     virtual ~Node() {};
     virtual std::string to_string() = 0;
     virtual NodeType type() const = 0;

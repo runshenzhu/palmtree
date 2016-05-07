@@ -1,5 +1,7 @@
 #include <iostream>
 #include <glog/logging.h>
+#include <vector>
+#include <thread>
 #include "fineTree.h"
 #include "../CycleTimer.h"
 using namespace std;
@@ -64,7 +66,7 @@ int main() {
 
   fineTree<int, int> fTree(0xffffffff);
 
-  auto entry_count = 1024 * 512;
+  auto entry_count = 1024 * 51200;
   auto read_count = 1024*1024*1;
   int *buff = new int[entry_count];
   for(int i = 0; i < entry_count; i++) {
@@ -77,16 +79,28 @@ int main() {
     auto kv = buff[j];
     fTree.insert(kv, kv);
   }
+  auto fp = &fTree;
 
-  fast_random rng(time(0));
+
   auto start = CycleTimer::currentSeconds();
-  for (int i = 0; i < read_count; i++) {
-    int rand_key = rng.next_u32() % entry_count;
-    int val;
-    auto res = fTree.search(rand_key, val);
-    if(res != 0 || val != rand_key) {
-      LOG(FATAL) << "search fail";
-    }
+  std::vector<std::thread> threads;
+  int w_n = 4;
+  for(int j = 0; j < w_n; j ++) {
+    threads.push_back(std::thread([fp, w_n, read_count, entry_count]() {
+      fast_random rng(time(0));
+      for (int i = 0; i < read_count / w_n; i++) {
+        int rand_key = rng.next_u32() % entry_count;
+        int val;
+        auto res = fp->search(rand_key, val);
+        if (res != 0 || val != rand_key) {
+          LOG(FATAL) << "search fail";
+        }
+      }
+    }));
+  }
+
+  for (auto &t : threads) {
+    t.join();
   }
   auto end = CycleTimer::currentSeconds();
   LOG(INFO) << "fineTree run for " << end-start << "s, " << "thput:" << std::fixed << read_count/(end-start)/1000 << " K rps";
