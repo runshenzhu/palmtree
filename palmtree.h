@@ -1588,10 +1588,10 @@ namespace palmtree {
       STAT.init_metric("dec task num");
 
       // Init the worker thread
+      // Init the worker thread and start them
       for (int worker_id = 0; worker_id < NUM_WORKER; worker_id++) {
         workers_.emplace_back(worker_id, this);
       }
-
       for (auto &worker : workers_) {
         worker.start();
       }
@@ -1612,11 +1612,10 @@ namespace palmtree {
     }
 
     ~PalmTree() {
-      DLOG(INFO) << "Destroy palm tree " << task_nums;
 
-      while(task_nums != 0) ;
-
+      // Mark the tree as destroyed
       destroyed_ = true;
+      // Join all workter thread
       for (auto &wthread : workers_)
         wthread.wthread_.join();
       // Free atomic layer width
@@ -1634,6 +1633,14 @@ namespace palmtree {
         tree_current_batch_->destroy();
         free(tree_current_batch_);
       }
+    }
+
+    /**
+     * @brief execute a batch of tree operations, the batch will be executed
+     *  cooperatively by all worker threads
+     */
+    void execute_batch(std::vector<TreeOp> &operations UNUSED) {
+
     }
 
     /**

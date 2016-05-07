@@ -515,9 +515,8 @@ int main(int argc, char *argv[]) {
   contention_ratio = atof(argv[4]);
 
 
-  auto insert = 1024 * 512 * 100;
-  auto op_num = 1024 * 1024 * 100;
-  // readonly_uniform(insert, op_num, c);
+  auto insert = 1024 * 512 * 10;
+  auto op_num = 1024 * 1024 * 10;
   if(r) {
     readonly_skew(insert, op_num, contention_ratio, c);
   }else {
