@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <jemalloc/jemalloc.h>
 #include <stx/btree_map.h>
+#include <pthread.h>
 #include "CycleTimer.h"
 
 #define TEST_SIZE 10240000
@@ -194,7 +195,7 @@ void populate_palm_tree(palmtree::PalmTree<int, int> *palmtreep, size_t entry_co
 
 // Run readonly benchmark with @entry_count number of entries, and @read_count
 // of read operations
-void readonly_bench(size_t entry_count, size_t op_count, bool run_std_map = false) {
+void readonly_uniform(size_t entry_count, size_t op_count, bool run_std_map = false) {
   LOG(INFO) << "Begin palmtree read only benchmark";
   palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min(), worker_num);
   palmtree::PalmTree<int, int> *palmtreep = &palmtree;
@@ -219,6 +220,7 @@ void readonly_bench(size_t entry_count, size_t op_count, bool run_std_map = fals
     last_key %= entry_count;
     batch_task_count++;
     int res;
+
     palmtreep->find(2 * last_key, res);
 
     if (batch_task_count >= palmtreep->batch_size()) {
@@ -232,6 +234,114 @@ void readonly_bench(size_t entry_count, size_t op_count, bool run_std_map = fals
   double end = CycleTimer::currentSeconds();
   LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << op_count/(end-start)/1000 << " K rps";
   double runtime = end-start;
+
+  if (run_std_map) {
+    LOG(INFO) << "Running std map";
+    std::map<int, int> map;
+    for (size_t i = 0; i < entry_count; i++)
+      map.insert(std::make_pair(i, i));
+
+    auto map_p = &map;
+    start = CycleTimer::currentSeconds();
+    std::vector<std::thread> threads;
+
+    pthread_rwlock_t lock_rw = PTHREAD_RWLOCK_INITIALIZER;
+    pthread_rwlock_t *l = &lock_rw;
+
+    for(int i = 0; i < worker_num; i++) {
+      threads.push_back(std::thread([map_p, op_count, entry_count, l]() {
+        fast_random rng(time(0));
+        for (size_t i = 0; i < op_count / worker_num; i++) {
+          int rand_key = rng.next_u32() % entry_count;
+          pthread_rwlock_rdlock(l);
+          map_p->find(rand_key);
+          pthread_rwlock_unlock(l);
+        }
+      }));
+    }
+
+    for(auto &t : threads) {
+      t.join();
+    }
+    end = CycleTimer::currentSeconds();
+    LOG(INFO) << "std::map run for " << end-start << "s, " << "thput:" << std::fixed << op_count/(end-start)/1000 << " K rps";
+    double runtime_ref = end-start;
+    LOG(INFO) << "SPEEDUP over std map: " << runtime_ref / runtime << " X";
+
+    threads.clear();
+
+    // stx
+    LOG(INFO) << "Running stx map";
+    stx::btree_map<int, int> stx_map;
+    for (size_t i = 0; i < entry_count; i++)
+      stx_map.insert(std::make_pair(i, i));
+
+
+    start = CycleTimer::currentSeconds();
+    auto stx_p = &stx_map;
+    for(int i = 0; i < worker_num; i++) {
+      threads.push_back(std::thread([stx_p, op_count, entry_count, l]() {
+        fast_random rng(time(0));
+        for (size_t i = 0; i < op_count / worker_num; i++) {
+          int rand_key = rng.next_u32() % entry_count;
+          pthread_rwlock_rdlock(l);
+          stx_p->find(rand_key);
+          pthread_rwlock_unlock(l);
+        }
+      }));
+    }
+
+    for(auto &t : threads) {
+      t.join();
+    }
+
+    end = CycleTimer::currentSeconds();
+    LOG(INFO) << "stx map run for " << end-start << "s, " << "thput:" << std::fixed << op_count/(end-start)/1000 << " K rps";
+
+  }
+}
+
+void readonly_skew(size_t entry_count, size_t op_count, bool run_std_map = false) {
+  LOG(INFO) << "Begin palmtree read only benchmark";
+  // palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min(), worker_num);
+  palmtree::PalmTree<int, int> *palmtreep = new palmtree::PalmTree<int, int>(std::numeric_limits<int>::min(), worker_num);
+
+  populate_palm_tree(palmtreep, entry_count);
+  // Reset the metrics
+  palmtreep->reset_metric();
+
+  // Wait for insertion finished
+  LOG(INFO) << entry_count << " entries inserted";
+
+  fast_random rng(time(0));
+
+  double start = CycleTimer::currentSeconds();
+  LOG(INFO) << "Benchmark started";
+
+  int one_step = entry_count / (palmtreep->batch_size()+1);
+  int last_key = 0;
+  int batch_task_count = 0;
+  for (size_t i = 0; i < op_count; i++) {
+    last_key += rng.next_u32() % one_step;
+    last_key %= entry_count;
+    batch_task_count++;
+    int res;
+
+    palmtreep->find(2 * last_key, res);
+
+    if (batch_task_count >= palmtreep->batch_size()) {
+      batch_task_count = 0;
+      last_key = 0;
+    }
+  }
+
+  LOG(INFO) << palmtreep->task_nums << " left";
+  palmtreep->wait_finish();
+  double end = CycleTimer::currentSeconds();
+  LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << op_count/(end-start)/1000 << " K rps";
+  double runtime = end-start;
+
+  delete palmtreep;
 
   if (run_std_map) {
     LOG(INFO) << "Running std map";
@@ -268,8 +378,9 @@ void readonly_bench(size_t entry_count, size_t op_count, bool run_std_map = fals
   }
 }
 
-void update_bench(size_t entry_count, size_t op_count, bool run_std_map = false) {
-  auto range = 2 * entry_count;
+
+
+void update_uniform(size_t entry_count, size_t op_count, bool run_std_map = false) {
   LOG(INFO) << "Begin palmtree read only benchmark";
   palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min(), worker_num);
   palmtree::PalmTree<int, int> *palmtreep = &palmtree;
@@ -286,7 +397,7 @@ void update_bench(size_t entry_count, size_t op_count, bool run_std_map = false)
   double start = CycleTimer::currentSeconds();
   LOG(INFO) << "Benchmark started";
 
-  int one_step = entry_count / (palmtreep->batch_size()+1);
+  int one_step = 2 * entry_count / (palmtreep->batch_size()+1);
   int last_key = 0;
   int batch_task_count = 0;
   int op_id = 0;
@@ -296,17 +407,13 @@ void update_bench(size_t entry_count, size_t op_count, bool run_std_map = false)
     batch_task_count++;
     op_id++;
     if(op_id == 5) {
-      auto key = rng.next_u32() % range;
-      if(key % 2 == 0) {
-        key++;
-      }
-      palmtreep->insert(key, key);
+      palmtreep->insert(last_key, last_key);
     } else if(op_id == 10) {
-      palmtree.remove(2 * last_key);
+      palmtree.remove(last_key);
       op_id = 0;
     }else {
       int res;
-      palmtreep->find(2 * last_key, res);
+      palmtreep->find(last_key, res);
     }
 
     if (batch_task_count >= palmtreep->batch_size()) {
@@ -346,10 +453,83 @@ void update_bench(size_t entry_count, size_t op_count, bool run_std_map = false)
 
     double runtime_ref = end-start;
     LOG(INFO) << "SPEEDUP over PalmTree: " << runtime_ref / runtime << " X";
+  }
+}
 
 
+void update_skew(size_t entry_count, size_t op_count, bool run_std_map = false) {
+  LOG(INFO) << "Begin palmtree read only benchmark";
+  palmtree::PalmTree<int, int> palmtree(std::numeric_limits<int>::min(), worker_num);
+  palmtree::PalmTree<int, int> *palmtreep = &palmtree;
 
+  populate_palm_tree(palmtreep, entry_count);
+  // Reset the metrics
+  palmtreep->reset_metric();
 
+  // Wait for insertion finished
+  LOG(INFO) << entry_count << " entries inserted";
+
+  fast_random rng(time(0));
+
+  double start = CycleTimer::currentSeconds();
+  LOG(INFO) << "Benchmark started";
+
+  int one_step = 2 * entry_count / (palmtreep->batch_size()+1);
+  int last_key = 0;
+  int batch_task_count = 0;
+  int op_id = 0;
+  for (size_t i = 0; i < op_count; i++) {
+    last_key += rng.next_u32() % one_step;
+    last_key %= entry_count;
+    batch_task_count++;
+    op_id++;
+    if(op_id == 5) {
+      palmtreep->insert(last_key, last_key);
+    } else if(op_id == 10) {
+      palmtree.remove(last_key);
+      op_id = 0;
+    }else {
+      int res;
+      palmtreep->find(last_key, res);
+    }
+
+    if (batch_task_count >= palmtreep->batch_size()) {
+      batch_task_count = 0;
+      last_key = 0;
+    }
+  }
+
+  LOG(INFO) << palmtreep->task_nums << " left";
+  palmtreep->wait_finish();
+  double end = CycleTimer::currentSeconds();
+  LOG(INFO) << "Palmtree run for " << end-start << "s, " << "thput: " << std::fixed << op_count/(end-start)/1000 << " K rps";
+  double runtime = end-start;
+
+  if (run_std_map) {
+    LOG(INFO) << "Running std map";
+    std::map<int, int> map;
+    for (size_t i = 0; i < entry_count; i++)
+      map.insert(std::make_pair(2 * i, 2 * i));
+
+    start = CycleTimer::currentSeconds();
+    op_id = 0;
+    for (size_t i = 0; i < op_count; i++) {
+      int rand_key = rng.next_u32() % entry_count;
+      op_id++;
+      if(op_id == 5) {
+        map[rand_key] = rand_key;
+      }else if (op_id == 10) {
+        map.erase(2 * rand_key);
+        op_id = 0;
+      }else {
+        map.find(rand_key);
+      }
+    }
+    end = CycleTimer::currentSeconds();
+    LOG(INFO) << "std::map run for " << end-start << "s, " << "thput:" << std::fixed << op_count/(end-start)/1000 << " K rps";
+
+    double runtime_ref = end-start;
+    LOG(INFO) << "SPEEDUP over PalmTree: " << runtime_ref / runtime << " X";
   }
 }
 
@@ -376,7 +556,10 @@ int main(int argc, char *argv[]) {
   }
 
 
-  readonly_bench(1024*512*1, 1024*1024*50, c);
+  auto insert = 1024 * 512;
+  auto op_num = 1024 * 1024 * 100;
+  readonly_uniform(insert, op_num, c);
+  // update_uniform(insert, op_num, c);
 
   return 0;
 }
