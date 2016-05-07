@@ -3,7 +3,7 @@
 # CFLAGS=-Werror -Wall -std=c++11 -mavx2 -g -ggdb -I/usr/local/include
 CFLAGS=-Werror -Wall -std=c++11 -mavx2 -O3 -I/usr/local/include
 
-LDFLAGS=-L/usr/local/lib -lboost_atomic -lboost_system -lboost_thread -lglog -ljemalloc
+LDFLAGS=-L/usr/local/lib -lboost_atomic -lboost_system -lboost_thread -lglog -ljemalloc -lpthread
 CC=g++
 
 all: palmtree_test
