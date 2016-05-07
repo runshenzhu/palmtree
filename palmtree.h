@@ -303,7 +303,7 @@ namespace palmtree {
     struct NodeMod {
       NodeMod(ModType type): type_(type) {}
       NodeMod(const TreeOp &op) {
-        CHECK(op.op_type_ != TREE_OP_FIND) << "NodeMod can't convert from a find operation" << endl;
+        // CHECK(op.op_type_ != TREE_OP_FIND) << "NodeMod can't convert from a find operation" << endl;
         if (op.op_type_ == TREE_OP_REMOVE) {
           this->type_ = MOD_TYPE_DEC;
           this->value_items.emplace_back(std::make_pair(op.key_, ValueType()));
@@ -341,7 +341,7 @@ namespace palmtree {
     TaskBatch *tree_current_batch_;
     // Push a task into the current batch, if the batch is full, push the batch
     // into the batch queue.
-    void push_task(TreeOpType op_type, const KeyType *keyp, const ValueType *valp) {
+    inline void push_task(TreeOpType op_type, const KeyType *keyp, const ValueType *valp) {
       tree_current_batch_->add_op(op_type, keyp, valp);
       task_nums++;
 
@@ -496,13 +496,13 @@ namespace palmtree {
 
       auto ptr = (InnerNode *)tree_root;
       for (;;) {
-        CHECK(ptr->slot_used > 0) << "Search empty inner node";
+        // CHECK(ptr->slot_used > 0) << "Search empty inner node";
         auto idx = this->search_inner(ptr->keys, ptr->slot_used, key);
-        CHECK(idx != -1) << "search innerNode fail" << endl;
-        CHECK(key_less(ptr->keys[idx], key) || key_eq(ptr->keys[idx], key));
-        if(idx + 1 < ptr->slot_used) {
-          CHECK(key_less(key, ptr->keys[idx + 1]));
-        }
+        // CHECK(idx != -1) << "search innerNode fail" << endl;
+        // CHECK(key_less(ptr->keys[idx], key) || key_eq(ptr->keys[idx], key));
+        // if(idx + 1 < ptr->slot_used) {
+          // CHECK(key_less(key, ptr->keys[idx + 1]));
+        // }
         Node *child = ptr->values[idx];
         if (child->type() == LEAFNODE) {
           return (LeafNode *)child;
@@ -612,11 +612,11 @@ namespace palmtree {
       DLOG(INFO) << "search inner begin";
       auto idx = search_inner(node->keys, node->slot_used, key);
 
-      CHECK(idx != -1) << "search innerNode fail" << key <<" " <<node->keys[0];
+      // CHECK(idx != -1) << "search innerNode fail" << key <<" " <<node->keys[0];
       CHECK(key_less(node->keys[idx], key) || key_eq(node->keys[idx], key));
-      if(idx + 1 < node->slot_used) {
-        CHECK(key_less(key, node->keys[idx + 1])) << "search inner fail";
-      }
+      // if(idx + 1 < node->slot_used) {
+        // CHECK(key_less(key, node->keys[idx + 1])) << "search inner fail";
+      // }
 
       DLOG(INFO) << "search inner end";
       auto k = key;
@@ -718,7 +718,7 @@ namespace palmtree {
       if(node->type() == LEAFNODE) {
         return modify_node_leaf((LeafNode *)node, mods);
       }else{
-        CHECK(node->type() == INNERNODE) << "unKnown node" << endl;
+        // CHECK(node->type() == INNERNODE) << "unKnown node" << endl;
         return modify_node_inner((InnerNode *)node, mods);
       }
     }
@@ -881,7 +881,7 @@ namespace palmtree {
           // to the new parent
           auto new_node = itr->second;
           for (int i = 0; i < new_node->slot_used; i++) {
-            CHECK(new_node->type() == INNERNODE) << " split leaf node in modify_node_inner";
+            // CHECK(new_node->type() == INNERNODE) << " split leaf node in modify_node_inner";
             ((InnerNode *)new_node)->values[i]->parent = new_node;
           }
         }
@@ -932,7 +932,7 @@ namespace palmtree {
         }
       }
 
-      CHECK(key_less(min, node->keys[idx]));
+      // CHECK(key_less(min, node->keys[idx]));
 
       if(idx == 0) {
         return;
@@ -1052,7 +1052,6 @@ namespace palmtree {
       int worker_id_;
       // The work for the worker at each stage
       std::vector<TreeOp *> current_tasks_;
-      std::unordered_map<Node *, std::vector<TreeOp *>> leaf_ops_;
       // Node modifications on each layer, the size of the vector will be the
       // same as the tree height
       typedef std::unordered_map<Node *, std::vector<NodeMod>> NodeModsMapType;
@@ -1161,21 +1160,26 @@ namespace palmtree {
         }
 
         // Then remove nodes that don't belong to the current worker
-        for (int i = 0; i < worker_id_; i++) {
+        for (int i = worker_id_-1; i >= 0; i--) {
           WorkerThread &wthread = palmtree_->workers_[i];
+          bool early_break = false;
           for (int j = wthread.current_tasks_.size()-1; j >= 0; j--) {
             auto &op = wthread.current_tasks_[j];
-            if (result.count(op->target_node_) == 0)
+            if (result.count(op->target_node_) == 0) {
+              early_break = true;
               break;
+            }
             result.erase(op->target_node_);
           }
+          if (early_break)
+            break;
         }
 
         for (int i = worker_id_+1; i < palmtree_->NUM_WORKER; i++) {
           WorkerThread &wthread = palmtree_->workers_[i];
           bool early_break = false;
           for (auto op : wthread.current_tasks_) {
-            CHECK(op->target_node_ != nullptr) << "worker " << i <<" hasn't finished search";
+            // CHECK(op->target_node_ != nullptr) << "worker " << i <<" hasn't finished search";
             if (result.find(op->target_node_) != result.end()) {
               result[op->target_node_].push_back(op);
             } else {
@@ -1285,7 +1289,7 @@ namespace palmtree {
                 leaf_mods.emplace(leaf, std::vector<NodeMod>());
               leaf_mods[leaf].push_back(NodeMod(*op));
             } else {
-              CHECK(op->op_type_ == TREE_OP_REMOVE) << "Invalid tree operation";
+              // CHECK(op->op_type_ == TREE_OP_REMOVE) << "Invalid tree operation";
               changed_values.erase(op->key_);
               if (leaf_mods.count(leaf) == 0)
                 leaf_mods.emplace(leaf, std::vector<NodeMod>());
@@ -1386,22 +1390,9 @@ namespace palmtree {
           DLOG(INFO) << "Worker " << worker_id_ << " got " << current_tasks_.size() << " tasks";
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 1: search for leaves";
 
-          leaf_ops_.clear();
-          std::unordered_map<Node *, std::vector<TreeOp *>> collected_tasks;
           for (auto op : current_tasks_) {
             op->target_node_ = palmtree_->search(op->key_);
-
-            CHECK(op->target_node_ != nullptr) << "search returns nullptr";
-
-            if (leaf_ops_.find(op->target_node_) == leaf_ops_.end()) {
-              //leaf_ops_.insert(op->target_node_, std::vector<TreeOp *>());
-              //collected_tasks.insert(op->target_node_, std::vector<TreeOp *>());
-              leaf_ops_[op->target_node_];
-              collected_tasks[op->target_node_];
-            }
-
-            leaf_ops_[op->target_node_].push_back(op);
-            collected_tasks[op->target_node_].push_back(op);
+            // CHECK(op->target_node_ != nullptr) << "search returns nullptr";
           }
 #ifdef PROFILE
           STAT.add_stat(worker_id_, "stage1", CycleTimer::currentTicks() - s1_bt);
@@ -1419,7 +1410,7 @@ namespace palmtree {
           // have been handled by workers whose worker_id is less than me.
           // Currently we use a unordered_map to record the ownership of tasks upon
           // certain nodes.
-
+          std::unordered_map<Node *, std::vector<TreeOp *>> collected_tasks;
           redistribute_leaf_tasks(collected_tasks);
           resolve_hazards(collected_tasks);
           DLOG_IF(INFO, worker_id_ == 0) << "resolved hazards";
@@ -1430,7 +1421,7 @@ namespace palmtree {
           for (auto itr = cur_mods.begin() ; itr != cur_mods.end(); itr++) {
             auto node = itr->first;
             auto &mods = itr->second;
-            CHECK(node != nullptr) << "Modifying a null node";
+            // CHECK(node != nullptr) << "Modifying a null node";
             auto upper_mod = palmtree_->modify_node(node, mods);
             // FIXME: now we have orphaned_keys
             if (upper_mod.type_ == MOD_TYPE_NONE && upper_mod.orphaned_kv.empty()) {
@@ -1642,7 +1633,7 @@ namespace palmtree {
      * @param key the key to be retrieved
      * @return nullptr if no such k,v pair
      */
-    bool find(const KeyType &key UNUSED, ValueType &value UNUSED) {
+    inline bool find(const KeyType &key UNUSED, ValueType &value UNUSED) {
       push_task(TREE_OP_FIND, &key, nullptr);
 
       // op.wait();
@@ -1655,7 +1646,7 @@ namespace palmtree {
     /**
      * @brief insert a k,v into the tree
      */
-    void insert(const KeyType &key UNUSED, const ValueType &value UNUSED) {
+    inline void insert(const KeyType &key UNUSED, const ValueType &value UNUSED) {
       // TreeOp op(TREE_OP_INSERT, key, value);
 
       push_task(TREE_OP_INSERT, &key, &value);
@@ -1666,7 +1657,7 @@ namespace palmtree {
     /**
      * @brief remove a k,v from the tree
      */
-    void remove(const KeyType &key UNUSED) {
+    inline void remove(const KeyType &key UNUSED) {
       push_task(TREE_OP_REMOVE, &key, nullptr);
 
       // op->wait();
