@@ -73,7 +73,7 @@ namespace palmtree {
         for (int i = 0; i < worker_num_; i++) {
           if (metric_name == "leaf_task") {
             line += "\t" + std::to_string(i) + ": " + std::to_string(values[i]);
-            
+
           } else {
             line += "\t" + std::to_string(i) + ": " + std::to_string(values[i] * CycleTimer::secondsPerTick());
           }
@@ -247,7 +247,7 @@ namespace palmtree {
 
     /**
      * A batch of tree operations, this data structure is not thread safe
-     * The major goal of this class is to amortize memory allocation of 
+     * The major goal of this class is to amortize memory allocation of
      * tree operations
      */
     class TaskBatch {
@@ -338,25 +338,18 @@ namespace palmtree {
     // Key comparator
     KeyComparator kcmp;
     // Current batch of the tree
-    TaskBatch *tree_current_batch_1;
-    TaskBatch *tree_current_batch_2;
+    TaskBatch *tree_current_batch_;
 
     // Push a task into the current batch, if the batch is full, push the batch
     // into the batch queue.
-    void push_task(TreeOpType op_type, const KeyType *keyp, const ValueType *valp, int id) {
-      TaskBatch **ptr;
-      if(id == 1) {
-        ptr = &tree_current_batch_1;
-      }else {
-        ptr = &tree_current_batch_2;
-      }
-      (*ptr)->add_op(op_type, keyp, valp);
+    void push_task(TreeOpType op_type, const KeyType *keyp, const ValueType *valp) {
+      tree_current_batch_->add_op(op_type, keyp, valp);
       task_nums++;
 
-      if ((*ptr)->is_full()) {
-        task_batch_queue_.push(*ptr);
-        *ptr = (TaskBatch *)malloc(sizeof(TaskBatch));
-        new (*ptr) TaskBatch(BATCH_SIZE);
+      if (tree_current_batch_->is_full()) {
+        task_batch_queue_.push(tree_current_batch_);
+        tree_current_batch_ = (TaskBatch *)malloc(sizeof(TaskBatch));
+        new (tree_current_batch_) TaskBatch(BATCH_SIZE);
         DLOG(INFO) << "Push one batch into the queue ";
       }
     }
@@ -1104,15 +1097,15 @@ namespace palmtree {
             }
           }
           // STAT.add_stat(0, "fetch_batch", CycleTimer::currentTicks() - bt);
-          // DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_->size();  
+          // DLOG(INFO) << "Collected a batch of " << palmtree_->current_batch_->size();
         }
 
-        palmtree_->sync(worker_id_);    
+        palmtree_->sync(worker_id_);
 
         if (palmtree_->current_batch_ == nullptr) {
           return;
         }
-        
+
         if (palmtree_->current_batch_->size() == 0) {
           return;
         }
@@ -1525,7 +1518,7 @@ namespace palmtree {
           palmtree_->sync(worker_id_);
 
           // Free the current batch
-          
+
           if (worker_id_ == 0 && palmtree_->current_batch_ != nullptr) {
             DLOG(INFO) << "Free the current batch";
             palmtree_->current_batch_->destroy();
@@ -1533,7 +1526,7 @@ namespace palmtree {
             palmtree_->current_batch_ = nullptr;
             DLOG(INFO) << "Free-ed";
           }
-            
+
           DLOG_IF(INFO, worker_id_ == 0) << "#### STAGE 4 finished";
 
           CycleTimer::SysClock end_tick = CycleTimer::currentTicks();
@@ -1549,12 +1542,12 @@ namespace palmtree {
      * PalmTree public    *
      * ********************/
   public:
-    std::atomic<unsigned long long> task_nums;
+    std::atomic<int> task_nums;
 
     PalmTree(KeyType min_key, int num_worker):
-      tree_depth_(1), 
-      destroyed_(false), 
-      min_key_(min_key), 
+      tree_depth_(1),
+      destroyed_(false),
+      min_key_(min_key),
       barrier_(num_worker),
       task_batch_queue_{1024*500}
     {
@@ -1570,14 +1563,12 @@ namespace palmtree {
       layer_width_.push_back(new std::atomic<int>(1));
       // Init current batch
       current_batch_ = nullptr;
-      tree_current_batch_1 = (TaskBatch *)malloc(sizeof(TaskBatch));
-      tree_current_batch_2 = (TaskBatch *)malloc(sizeof(TaskBatch));
-      new (tree_current_batch_1) TaskBatch(BATCH_SIZE);
-      new (tree_current_batch_2) TaskBatch(BATCH_SIZE);
+      tree_current_batch_ = (TaskBatch *)malloc(sizeof(TaskBatch));
+      new (tree_current_batch_) TaskBatch(BATCH_SIZE);
       // Init stats
 
       STAT = Stats(NUM_WORKER);
-      
+
       STAT.init_metric("batch_sort");
       STAT.init_metric("stage0");
       STAT.init_metric("stage1");
@@ -1641,14 +1632,10 @@ namespace palmtree {
 
       free_recursive(tree_root);
 
-      if (tree_current_batch_1 != nullptr) {
-        tree_current_batch_1->destroy();
-        free(tree_current_batch_1);
-      }
 
-      if (tree_current_batch_2 != nullptr) {
-        tree_current_batch_2->destroy();
-        free(tree_current_batch_2);
+      if (tree_current_batch_ != nullptr) {
+        tree_current_batch_->destroy();
+        free(tree_current_batch_);
       }
     }
 
@@ -1657,8 +1644,8 @@ namespace palmtree {
      * @param key the key to be retrieved
      * @return nullptr if no such k,v pair
      */
-    bool find(const KeyType &key UNUSED, ValueType &value UNUSED, int id) {
-      push_task(TREE_OP_FIND, &key, nullptr, id);
+    bool find(const KeyType &key UNUSED, ValueType &value UNUSED) {
+      push_task(TREE_OP_FIND, &key, nullptr);
 
       // op.wait();
       //if (op.boolean_result_)
@@ -1670,10 +1657,10 @@ namespace palmtree {
     /**
      * @brief insert a k,v into the tree
      */
-    void insert(const KeyType &key UNUSED, const ValueType &value UNUSED, int id) {
+    void insert(const KeyType &key UNUSED, const ValueType &value UNUSED) {
       // TreeOp op(TREE_OP_INSERT, key, value);
 
-      push_task(TREE_OP_INSERT, &key, &value, id);
+      push_task(TREE_OP_INSERT, &key, &value);
 
       // op.wait();
     }
@@ -1681,8 +1668,8 @@ namespace palmtree {
     /**
      * @brief remove a k,v from the tree
      */
-    void remove(const KeyType &key UNUSED, int id) {
-      push_task(TREE_OP_REMOVE, &key, nullptr, id);
+    void remove(const KeyType &key UNUSED) {
+      push_task(TREE_OP_REMOVE, &key, nullptr);
 
       // op->wait();
     }
@@ -1696,15 +1683,11 @@ namespace palmtree {
     }
 
     // Wait until all task finished
-    void wait_finish(int id) {
-      if (id == 1 && tree_current_batch_1->size() != 0) {
-        task_batch_queue_.push(tree_current_batch_1);
-        tree_current_batch_1 = (TaskBatch *)malloc(sizeof(TaskBatch));
-        new (tree_current_batch_1) TaskBatch(BATCH_SIZE);
-      }else if (id == 2 && tree_current_batch_2->size() != 0) {
-        task_batch_queue_.push(tree_current_batch_2);
-        tree_current_batch_2 = (TaskBatch *)malloc(sizeof(TaskBatch));
-        new (tree_current_batch_2) TaskBatch(BATCH_SIZE);
+    void wait_finish() {
+      if (tree_current_batch_->size() != 0) {
+        task_batch_queue_.push(tree_current_batch_);
+        tree_current_batch_ = (TaskBatch *)malloc(sizeof(TaskBatch));
+        new (tree_current_batch_) TaskBatch(BATCH_SIZE);
       }
       while (task_nums != 0)
         ;
