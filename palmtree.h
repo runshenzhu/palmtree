@@ -595,7 +595,12 @@ namespace palmtree {
       // add item to leaf node
       // just append it to the end of the slot
       if (node->type() == LEAFNODE) {
-        auto idx = node->slot_used++;
+        // auto idx = node->slot_used++;
+        auto idx = search_leaf(node->keys, node->slot_used, key);
+        if(idx != -1) {
+          return;
+        }
+        idx = node->slot_used++;
         node->keys[idx] = key;
         node->values[idx] = value;
         return;
@@ -858,7 +863,7 @@ namespace palmtree {
                 buf.erase(kv);
                 // TODO: memleak
               }else{
-                cout << "del " << kv.first<<endl;
+                // cout << "del " << kv.first<<endl;
                 del_item<InnerNode>(node, kv.first);
 
               }
@@ -1101,7 +1106,6 @@ namespace palmtree {
         }
 
         palmtree_->sync(worker_id_);
-
         if (palmtree_->current_batch_ == nullptr) {
           return;
         }
@@ -1393,16 +1397,6 @@ namespace palmtree {
             op->target_node_ = palmtree_->search(op->key_);
 
             CHECK(op->target_node_ != nullptr) << "search returns nullptr";
-
-            if (leaf_ops_.find(op->target_node_) == leaf_ops_.end()) {
-              //leaf_ops_.insert(op->target_node_, std::vector<TreeOp *>());
-              //collected_tasks.insert(op->target_node_, std::vector<TreeOp *>());
-              leaf_ops_[op->target_node_];
-              collected_tasks[op->target_node_];
-            }
-
-            leaf_ops_[op->target_node_].push_back(op);
-            collected_tasks[op->target_node_].push_back(op);
           }
 #ifdef PROFILE
           STAT.add_stat(worker_id_, "stage1", CycleTimer::currentTicks() - s1_bt);
@@ -1495,16 +1489,16 @@ namespace palmtree {
           }
 
           auto st2 = CycleTimer::currentTicks();
-          for (auto op : current_tasks_) {
-            // op->done_ = true;
-            if (op->op_type_ == TREE_OP_FIND) {
-              if(op->boolean_result_ == false || op->key_ != op->result_) {
-                cout << "find " << op->key_ << " fail" <<endl;
-                cout << "key " << op->key_ << " result " << op->result_ << endl;
-              }
-            }
-            // free(op);
-          }
+//          for (auto op : current_tasks_) {
+//            // op->done_ = true;
+//            if (op->op_type_ == TREE_OP_FIND) {
+//              if(op->boolean_result_ == false || op->key_ != op->result_) {
+//                cout << "find " << op->key_ << " fail" <<endl;
+//                cout << "key " << op->key_ << " result " << op->result_ << endl;
+//              }
+//            }
+//            // free(op);
+//          }
           STAT.add_stat(worker_id_, "deliver tasks", CycleTimer::currentTicks() - st2);
 
           auto st3 = CycleTimer::currentTicks();
@@ -1568,7 +1562,6 @@ namespace palmtree {
       // Init stats
 
       STAT = Stats(NUM_WORKER);
-
       STAT.init_metric("batch_sort");
       STAT.init_metric("stage0");
       STAT.init_metric("stage1");
