@@ -156,7 +156,6 @@ namespace palmtree {
       virtual std::string to_string() {
         std::string res;
         res += "InnerNode[" + std::to_string(Node::id) + " @ " + std::to_string(Node::level) + "] ";
-        // res += std::to_string(Node::slot_used);
         for (int i = 0 ; i < Node::slot_used ; i++) {
           res += " " + std::to_string(keys[i]) + ":" + std::to_string(values[i]->id);
         }
@@ -1117,14 +1116,7 @@ namespace palmtree {
         if (palmtree_->current_batch_->size() == 0) {
           return;
         }
-
-        // auto bt = CycleTimer::currentTicks();
-        // firstly sort the batch
-        // std::sort(palmtree_->current_batch_.begin(), palmtree_->current_batch_.end(), [this](const TreeOp *op1, const TreeOp *op2) {
-        //     return palmtree_->key_less(op1->key_, op2->key_);
-        // });
         // STAT.add_stat(worker_id_, "batch_sort", CycleTimer::currentTicks() - bt);
-
 
         // Partition the task among threads
         int batch_size = palmtree_->current_batch_->size();
@@ -1139,20 +1131,6 @@ namespace palmtree {
           palmtree_->workers_[worker_id_].current_tasks_
               .push_back(palmtree_->current_batch_->get_op(i));
         }
-
-        // int worker_id = 0;
-
-        // int i;
-        // for (i = 0; i < batch_size; worker_id++) {
-        //   int ntask = task_per_thread + (task_residue > 0 ? 1 : 0);
-
-        //   for (int j = i; j < i+ntask; j++)
-        //     palmtree_->workers_[worker_id].current_tasks_
-        //       .push_back(palmtree_->current_batch_->get_op(j));
-        //   i += ntask;
-        //   task_residue--;
-        // }
-        // CHECK(i == batch_size) << "Not all work distributed";
       }
 
       // Redistribute the tasks on leaf node
@@ -1493,16 +1471,6 @@ namespace palmtree {
           }
 
           auto st2 = CycleTimer::currentTicks();
-//          for (auto op : current_tasks_) {
-//            // op->done_ = true;
-//            if (op->op_type_ == TREE_OP_FIND) {
-//              if(op->boolean_result_ == false || op->key_ != op->result_) {
-//                cout << "find " << op->key_ << " fail" <<endl;
-//                cout << "key " << op->key_ << " result " << op->result_ << endl;
-//              }
-//            }
-//            // free(op);
-//          }
           STAT.add_stat(worker_id_, "deliver tasks", CycleTimer::currentTicks() - st2);
 
           auto st3 = CycleTimer::currentTicks();
