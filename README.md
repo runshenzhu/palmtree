@@ -28,11 +28,11 @@ For our prototype system, we implmeneted 3 public APIs in C++:
 * **void delete(const KeyType &key)**. delete() will delete the entry in the tree if key is present in the tree.
 * **void insert(const KeyType &key, const ValueType &valuel)**; insert() will insert an entry into the tree.
 
-###Approach:
-####Approach #1: Coarse Grained Locking
+### Approach:
+#### Approach #1: Coarse Grained Locking
 There are several ways to implement a concurrent B+Tree. The easiest one is to have a coarse grained lock to protect the tree, for example we can use a shared lock to support `find()`, `delete()` and `insert()`. The strategy is simple, `find()` can take a read lock, as it won’t change the structure of the tree. `delete()` and `insert()` need to take a write lock, because it will modify the tree. The advantage of coarse grained locking is its simplism, but it is often not the optimal solution since `find()` will block `delete()` and `insert()`, `delete()` and `insert()` will block all other operations on the tree.
 
-####Approach #2: Fine Grained Locking
+#### Approach #2: Fine Grained Locking
 The second approach is to use fine grained locking to protect the tree data structure. One viable way is to use some sort of hand-over-hand locking when searching down the tree, and lock the corresponding nodes before the tree structure is modified. In this project, to compare with our lock free implmenetation, we also designed and implemented a fine grained locking B+Tree: 
 
 * For `find()`, we first acquire a lock on the root node, find the corresponding child node and acquire the lock on that node then release the lock held previously on the root node. For internal node, we always acquire a lock on the target child node before releasing the lock.
@@ -42,7 +42,7 @@ The advantage of this approach is that readers will not block readers, and it bl
 
 The disadvantage of this approach is that writers will still block readers. The writers will take an exclusive path on the tree, meaning that no other operations are possibly happen at the same time. 
 
-####Approach #3: Lock Free
+#### Approach #3: Lock Free
 Approach #1 and #2 both used lock to protect the data strucutre. In both cases, writers will block readers and other writers. It is more soundable to implement a lock free B+Tree that both readers and writers can proceed without blocking each other. One of such example is Palm Tree. Palm Tree is a lock free concurrent B+Tree proposed by Intel in [1], it features a Bulk Synchronized Parallism (BSP) approach to bulkly perform B+Tree operations and resolve hazards gracefully. The main contribution of this project is an efficient implementation of Palm Tree.
 
 The first idea of Palm Tree is to group quries into batches, and the batches are processed one at a time cooperatively by a pool of threads. The idea behind batch is that by performing more quries at a time will likely to compensate the communication and scheduling overhead.
@@ -64,7 +64,7 @@ Second, to resolve conflicting access to the tree, Palm Tree adopts a stage by s
 
 During the upwards operations, within each layer the task needs to be re-distributed to ensure correctness and leverages parallisms. Palm Tree's partition algorithm is as follows: for each worker thread, it records all the nodes it has accessed in the lower level, then dicards all nodes that have been accessed by a worker with a lower worker id (each worker is assigned a worker id from 0~`WORKER_NUM`). One drawbacks of such approach would be workload imbalance, as the worker with lower id has privilege over other workers.
 
-###Optimizations:
+### Optimizations:
 * The first optimization we made is to pre-sort the queries in a batch,  and assign them to threads in an ordered way. We will see below that pre-sort can benifit task distribution process, here the main benift is load balancing. If the batch is pre-sorted, each worker thread will be assigned a range of queries, and they will reach leaf layer with properly ordered leaf nodes. Comparing to random assignment of tasks, the 0th worker may end up with many leaf nodes, potentially have more work than others due to the task distribution policy.
 
 * Next, we soonly find out that memory allocation is a bottleneck. When we measured from perf, with higher thread counts, the time spent in malloc and free takes longer and longer, so we suspuct the memory allocator is not scalable. We searched online and find a good scalable memory allocator called JEMalloc, it is nearly zero change to our code to use JeMalloc.
@@ -73,7 +73,7 @@ During the upwards operations, within each layer the task needs to be re-distrib
 
 * Reduce communication overhead.
 	* Pre-sort a batch with different purpose. Task distribution is actually a proactive process. As described in the previous section, task distribution is by probing into other threads' task and determine which tasks belong to the worker, sorting the queries beforehand can potentially just looking at a worker's neighbours. 
-	* Previously, the 0th worker is a special worker, it is responsible for distributing the queries on the tree to all other workers. This portion of code is sequential, we improve it by let each thread calculate the range of its responsible quries and collect its own task cooperatively.
+	* Previously, the 0th worker is a special worker, it is responsible for distributing the queries on the tree to all other workers. This portion of code is sequential, we improve it by let each thread calculate the range of its responsible queries and collect its own task cooperatively.
 
 ### Results:
 The platform we run our evaluation on:
